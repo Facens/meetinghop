@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>MeetingHop</string>
+  <key>CFBundleDisplayName</key><string>MeetingHop</string>
+  <key>CFBundleIdentifier</key><string>dev.facens.meetinghop</string>
+  <key>CFBundleExecutable</key><string>MeetingHop</string>
+  <key>CFBundleIconFile</key><string>MeetingHop</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <key>CFBundleVersion</key><string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHumanReadableCopyright</key><string>MIT licensed</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>MeetingHop reads your calendar to find the next meeting with a join link.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>MeetingHop reads your calendar to find the next meeting with a join link.</string>
+</dict>
+</plist>

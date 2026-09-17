@@ -1,0 +1,240 @@
+import Foundation
+
+/// Minimal test harness.
+///
+/// XCTest and swift-testing are Xcode-only tooling — neither module is present
+/// in a Command Line Tools install — and R32 forbids Xcode-only tooling, so the
+/// suite cannot be a SwiftPM `.testTarget`. This is that replacement: an
+/// executable that runs every suite and exits non-zero on the first failure it
+/// records. It is deliberately small; it is not a test framework.
+///
+/// Ported from AgentMenu's `Tests/AgentMenuKitTests/Harness.swift`. One
+/// addition beyond the source: per-suite expectation counts (`perSuite`,
+/// `suiteOrder`), routed through a single `pass()` so every success path
+/// increments both the total and the suite tally in one place — a suite that
+/// silently stops running (an early `return`, a suite call that never
+/// happens) shows up as a missing or short line in `report()` rather than
+/// only a smaller grand total.
+final class TestRunner {
+    private(set) var passed = 0
+    private(set) var failures: [String] = []
+    private var currentSuite = "(no suite)"
+    private var suiteOrder: [String] = []
+    private var perSuite: [String: Int] = [:]
+
+    func suite(_ name: String) {
+        currentSuite = name
+        if perSuite[name] == nil {
+            perSuite[name] = 0
+            suiteOrder.append(name)
+        }
+        print("── \(name)")
+    }
+
+    private func pass() {
+        passed += 1
+        perSuite[currentSuite, default: 0] += 1
+    }
+
+    func expect(
+        _ condition: Bool,
+        _ what: String,
+        file: StaticString = #file,
+        line: UInt = #line
+    ) {
+        if condition {
+            pass()
+        } else {
+            record(what, file: file, line: line)
+        }
+    }
+
+    func expectEqual<T: Equatable>(
+        _ actual: T,
+        _ expected: T,
+        _ what: String,
+        file: StaticString = #file,
+        line: UInt = #line
+    ) {
+        if actual == expected {
+            pass()
+        } else {
+            record("\(what) — expected \(expected), got \(actual)", file: file, line: line)
+        }
+    }
+
+    func expectThrows<T>(
+        _ what: String,
+        file: StaticString = #file,
+        line: UInt = #line,
+        _ body: () throws -> T
+    ) {
+        do {
+            _ = try body()
+            record("\(what) — expected a thrown error, none was thrown", file: file, line: line)
+        } catch {
+            pass()
+        }
+    }
+
+    /// Runs `body` and records a failure if it throws, so one broken case does
+    /// not abort the whole run.
+    func expectNoThrow(
+        _ what: String,
+        file: StaticString = #file,
+        line: UInt = #line,
+        _ body: () throws -> Void
+    ) {
+        do {
+            try body()
+            pass()
+        } catch {
+            record("\(what) — unexpected error: \(error)", file: file, line: line)
+        }
+    }
+
+    /// Runs `body`, returning its value, or nil after recording the thrown error.
+    /// Use it when the later expectations need the value the call produced.
+    func attempt<T>(
+        _ what: String,
+        file: StaticString = #file,
+        line: UInt = #line,
+        _ body: () throws -> T
+    ) -> T? {
+        do {
+            let value = try body()
+            pass()
+            return value
+        } catch {
+            record("\(what) — unexpected error: \(error)", file: file, line: line)
+            return nil
+        }
+    }
+
+    private func record(_ message: String, file: StaticString, line: UInt) {
+        let leaf = URL(fileURLWithPath: "\(file)").lastPathComponent
+        let entry = "\(currentSuite): \(message)  [\(leaf):\(line)]"
+        failures.append(entry)
+        print("   ✗ \(entry)")
+    }
+
+    func report() -> Int32 {
+        print("")
+        print("Per-suite expectation counts:")
+        for name in suiteOrder {
+            print("  \(name): \(perSuite[name] ?? 0)")
+        }
+        print("")
+        if failures.isEmpty {
+            print("PASS — \(passed) expectations")
+            return 0
+        }
+        print("FAIL — \(failures.count) failed, \(passed) passed")
+        for failure in failures { print("  ✗ \(failure)") }
+        return 1
+    }
+}
+
+/// A temporary directory that removes itself.
+struct TempDir {
+    let url: URL
+
+    init(_ label: String = "meetinghop-tests") {
+        url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("\(label)-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+
+    func path(_ component: String) -> String {
+        url.appendingPathComponent(component).path
+    }
+
+    func write(_ contents: String, to component: String) throws {
+        let target = url.appendingPathComponent(component)
+        try FileManager.default.createDirectory(
+            at: target.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try contents.write(to: target, atomically: true, encoding: .utf8)
+    }
+
+    func cleanup() {
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+/// The repository root, computed from a test file's own path rather than
+/// the process's working directory (`make test` may run from anywhere):
+/// `<file>.swift -> MeetingHopKitTests/ -> Tests/ -> repo root`.
+///
+/// Ported from AgentMenu's `Tests/AgentMenuKitTests/Harness.swift`, and
+/// shared here the same way: every suite that needs the root calls this
+/// instead of keeping its own private copy.
+func repositoryRoot(file: StaticString = #filePath) -> URL {
+    URL(fileURLWithPath: "\(file)")
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+}
+
+/// The result of running a script or executable as a subprocess: its exit
+/// status plus everything it wrote to stdout and stderr. Was
+/// `PublishScriptTests`' own private `ScriptOutput`; moved here, non-private,
+/// so every suite that shells out shares one result type.
+struct ScriptOutput {
+    let status: Int32
+    let stdout: String
+    let stderr: String
+}
+
+/// Runs `executable` as a real subprocess and collects its result. `extra`
+/// is merged over the current process's environment, and `directory`, when
+/// given, becomes the child's working directory. Stdout and stderr are
+/// drained fully before `waitUntilExit` — with large output a pipe can
+/// deadlock otherwise, once its buffer fills and the child blocks writing to
+/// it. A `run()` throw (missing executable, unreadable script, …) is
+/// reported as a normal, failing `ScriptOutput` rather than propagated, so
+/// scenarios that expect failure do not need their own catch.
+///
+/// Ported from AgentMenu's `Tests/AgentMenuKitTests/Harness.swift`, which
+/// returns the equivalent `CLIResult` there — this project has no such type,
+/// so `runProcess` returns the `ScriptOutput` above instead.
+func runProcess(
+    _ executable: String,
+    _ arguments: [String],
+    in directory: URL? = nil,
+    environment extra: [String: String] = [:]
+) -> ScriptOutput {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    if let directory {
+        process.currentDirectoryURL = directory
+    }
+    var environment = ProcessInfo.processInfo.environment
+    for (key, value) in extra { environment[key] = value }
+    process.environment = environment
+
+    let out = Pipe()
+    let err = Pipe()
+    process.standardOutput = out
+    process.standardError = err
+    do {
+        try process.run()
+    } catch {
+        return ScriptOutput(status: -1, stdout: "", stderr: "\(error)")
+    }
+    let stdout = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let stderr = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    process.waitUntilExit()
+    return ScriptOutput(status: process.terminationStatus, stdout: stdout, stderr: stderr)
+}
+
+/// Wraps a path for `bash -c`. MeetingHopKit itself has no shell-quoting
+/// helper (unlike AgentMenu's `ShellQuoting.singleQuoted`, which
+/// `CheckSourceTests` there imports from the Kit); every scratch tree that
+/// pipes a path through `git -C ... archive | tar -x -C ...` needs one, so
+/// it lives here instead of as a private copy per file.
+func singleQuoted(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}

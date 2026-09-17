@@ -1,0 +1,51 @@
+name: CI
+
+# Build, test, bundle, and assert the bundle's layout and signature
+# consistency on every push and pull request (R10). A pull request from a fork
+# receives no secrets, so the bundle here is ad-hoc signed and the assertion is
+# consistency, not authority: no Mach-O left linker-signed while another
+# carries an identity, entitlements on the app only, hardened runtime
+# requested (R24, KTD16). The authority check runs in release.yml, where the
+# certificate exists. Ported from AgentMenu's ci.yml.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: macos-14
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Show toolchain
+        run: swift --version
+
+      # MeetingHopKit free of AppKit, SwiftUI, EventKit and Sparkle — in the
+      # manifest as well as in the imports. No licence-header check: MeetingHop
+      # is MIT and carries none (R21 is scoped to AgentMenu).
+      - name: Check the source tree
+        run: packaging/check-source.sh
+
+      - name: Build (release)
+        run: swift build -c release
+
+      - name: Test
+        run: make test
+
+      - name: Bundle
+        run: make bundle
+
+      - name: Check bundle layout
+        run: |
+          test -x dist/MeetingHop.app/Contents/MacOS/MeetingHop
+          test -f dist/MeetingHop.app/Contents/Info.plist
+          test -f dist/MeetingHop.app/Contents/Resources/MeetingHop.icns
+
+      - name: Assert signature consistency
+        run: packaging/verify-signing.sh consistency dist/MeetingHop.app
