@@ -45,7 +45,7 @@ final class CalendarSource {
             object: store
         )
         let t = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor [weak self] in self?.refresh() }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t

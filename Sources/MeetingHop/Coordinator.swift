@@ -65,7 +65,7 @@ final class Coordinator {
         calendar.start()
 
         let t = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.evaluate() }
+            Task { @MainActor [weak self] in self?.evaluate() }
         }
         RunLoop.main.add(t, forMode: .common)
         tick = t
