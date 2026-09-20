@@ -10,21 +10,25 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-0.0.0-alpha}"
 APP="dist/MeetingHop.app"
 MACOS_DIR="$APP/Contents/MacOS"
 RES_DIR="$APP/Contents/Resources"
 
-# R20 / KTD10: one placeholder feeds both CFBundleShortVersionString and
-# CFBundleVersion, so the version has to satisfy the stricter of the two —
-# CFBundleVersion is what Sparkle orders updates by, numerically. Dotted digits
-# only, validated before anything is built: there are no pre-release tags, so
-# there is nothing to strip, and a malformed version fails here instead of
-# stamping a build number no client could order.
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "error: VERSION must be MAJOR.MINOR.PATCH, digits only (got '$VERSION')" >&2
-    exit 1
-fi
+# R20 / KTD10 (as amended): three release channels share one version grammar —
+# stable (MAJOR.MINOR.PATCH), beta (MAJOR.MINOR.PATCH-beta.N) and alpha
+# (MAJOR.MINOR.PATCH-alpha), see packaging/version.sh for the table. The two
+# Info.plist version keys can no longer share one placeholder, because
+# Sparkle's comparator (SUStandardVersionComparator) stops reading at the
+# first "-", so 0.2.0-beta.1 and 0.2.0 would tie and a beta install could
+# never be offered the final. CFBundleShortVersionString stays the human
+# string, as written; CFBundleVersion is derived — the same three components
+# plus a fourth that breaks the tie and keeps the sequence monotonic. Both are
+# validated and derived here, before anything is built, so a malformed
+# version fails before it can stamp a build number no client could order.
+source "$ROOT/packaging/version.sh"
+CHANNEL="$(version_channel "$VERSION")" || exit 1
+BUILD="$(version_build "$VERSION")" || exit 1
 
 echo "==> building"
 swift build -c release --product MeetingHop
@@ -41,7 +45,7 @@ cp dist/icon/MeetingHop.icns "$RES_DIR/MeetingHop.icns"
 # Bundle.main, and falls back to an SF Symbol when it is absent.
 cp dist/icon/menubar/MenuBarIconTemplate*.png "$RES_DIR/"
 
-sed "s/__VERSION__/$VERSION/g" packaging/Info.plist > "$APP/Contents/Info.plist"
+sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" packaging/Info.plist > "$APP/Contents/Info.plist"
 
 # ---------------------------------------------------------------------------
 # Signing. Ported from AgentMenu's packaging/bundle.sh.
@@ -102,7 +106,7 @@ case "$SIGN_ID" in
 esac
 
 if [ "$SIGN_ID" = "-" ]; then
-    echo "==> built $APP ($VERSION, AD-HOC signed — not a release)"
+    echo "==> built $APP ($VERSION, channel $CHANNEL, AD-HOC signed — not a release)"
 else
-    echo "==> built $APP ($VERSION, signed by $SIGN_ID)"
+    echo "==> built $APP ($VERSION, channel $CHANNEL, signed by $SIGN_ID)"
 fi

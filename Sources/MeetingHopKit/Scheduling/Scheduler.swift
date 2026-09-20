@@ -33,13 +33,28 @@ public enum Scheduler {
         meetings.first { $0.start <= now && $0.end > now }
     }
 
+    /// The candidate that leads the slot.
+    ///
+    /// `meetings` is start-ascending, so a meeting that has already started
+    /// sorts ahead of one starting in two minutes. Taking the first candidate
+    /// outright would therefore let a missed meeting shadow an imminent one —
+    /// which is KTD7 all over again, and worst on Meet/Teams/Webex, where a
+    /// join is never observable and so a meeting the user is sitting in is
+    /// never in `dismissedIDs`. An imminent meeting can still be caught in
+    /// time; a missed one is already lost, so it leads only when nothing
+    /// upcoming is inside the lead window.
     public static func nextCandidate(
-        after current: UpcomingMeeting?,
         in meetings: [UpcomingMeeting],
         now: Date,
-        dismissedIDs: Set<String>
+        dismissedIDs: Set<String>,
+        leadMinutes: Int
     ) -> UpcomingMeeting? {
-        meetings.first { isCandidate($0, current: current, now: now, dismissedIDs: dismissedIDs) }
+        let candidates = meetings.filter { isCandidate($0, now: now, dismissedIDs: dismissedIDs) }
+        let window = Double(leadMinutes * 60)
+        let imminent = candidates.first {
+            $0.start > now && $0.start.timeIntervalSince(now) <= window
+        }
+        return imminent ?? candidates.first
     }
 
     /// Two calendar entries can occupy the same slot — a double booking the
@@ -52,18 +67,18 @@ public enum Scheduler {
     /// no guaranteed order between two events with the same start: the rows
     /// would reshuffle under the user's cursor on every five-second tick.
     public static func nextCandidates(
-        after current: UpcomingMeeting?,
         in meetings: [UpcomingMeeting],
         now: Date,
-        dismissedIDs: Set<String>
+        dismissedIDs: Set<String>,
+        leadMinutes: Int
     ) -> [UpcomingMeeting] {
         guard let leader = nextCandidate(
-            after: current, in: meetings, now: now, dismissedIDs: dismissedIDs
+            in: meetings, now: now, dismissedIDs: dismissedIDs, leadMinutes: leadMinutes
         ) else { return [] }
 
         return meetings
             .filter {
-                isCandidate($0, current: current, now: now, dismissedIDs: dismissedIDs)
+                isCandidate($0, now: now, dismissedIDs: dismissedIDs)
                     && abs($0.start.timeIntervalSince(leader.start)) <= concurrencyWindow
             }
             .sorted { ($0.start, $0.title, $0.id) < ($1.start, $1.title, $1.id) }
@@ -77,6 +92,19 @@ public enum Scheduler {
     /// separate card seconds later.
     public static let concurrencyWindow: TimeInterval = 60
 
+    /// How long a meeting that has already started keeps being offered when
+    /// the user never answered it.
+    ///
+    /// A calendar entry that starts is not a meeting the user joined — the app
+    /// learns about a join only when the Join button is pressed. Treating
+    /// "started" as "handled" is what made a meeting the user was late for
+    /// vanish from the card the moment it began, which is exactly when they
+    /// need it. The window is bounded rather than the meeting's whole duration
+    /// because a card pinned under the menu bar is an interruption: the
+    /// permanent affordance is the menu-bar list, which keeps the meeting for
+    /// as long as it runs.
+    public static let missedGrace: TimeInterval = 10 * 60
+
     /// How many offers the card renders. The rest ride along in the decision
     /// as `Card.overflow` — they are still offered, still sticky, and they
     /// take a visible row as soon as one above them is answered — but a card
@@ -84,15 +112,20 @@ public enum Scheduler {
     /// rows of it is a wall.
     public static let maxCardItems = 4
 
+    /// `currentMeeting` is deliberately not consulted here: a meeting is
+    /// skipped because the user answered it, never because the clock passed
+    /// its start. A meeting they joined is in `dismissedIDs` —
+    /// `Coordinator.join` puts it there — so the first guard already covers
+    /// the real "I am in this one" case, while an unanswered meeting stays
+    /// offerable for `missedGrace` past its start instead of disappearing
+    /// into the meeting-in-progress lookup.
     private static func isCandidate(
         _ meeting: UpcomingMeeting,
-        current: UpcomingMeeting?,
         now: Date,
         dismissedIDs: Set<String>
     ) -> Bool {
-        if let current, meeting.id == current.id { return false }
         guard !dismissedIDs.contains(meeting.id) else { return false }
-        return meeting.end > now && meeting.start >= now.addingTimeInterval(-30)
+        return meeting.end > now && meeting.start >= now.addingTimeInterval(-missedGrace)
     }
 
     /// The single scheduling decision: conceal, hide, or present a card.
@@ -114,15 +147,26 @@ public enum Scheduler {
         // if a fresher calendar fetch would now prefer something else. An
         // offer that is answered or ends drops out here and the rest of the
         // card stays up; the card only goes when the last one does.
+        //
+        // The one bound on that: an offer the user never answered stops being
+        // re-presented `missedGrace` past its own start. Without it the grace
+        // window is unreachable in the running app — the offer is carried
+        // forward on every tick, sticky fires before the candidate scan is
+        // consulted, and a card for a meeting nobody answered camps under the
+        // menu bar for the meeting's whole duration. The menu-bar list is
+        // what keeps the meeting joinable after that.
         let sticky = input.offered.filter {
-            !input.dismissedIDs.contains($0.id) && $0.end > input.now
+            !input.dismissedIDs.contains($0.id)
+                && $0.end > input.now
+                && $0.start >= input.now.addingTimeInterval(-missedGrace)
         }
         if !sticky.isEmpty {
             return .present(card(for: sticky, current: current, input: input))
         }
 
         let candidates = nextCandidates(
-            after: current, in: input.meetings, now: input.now, dismissedIDs: input.dismissedIDs
+            in: input.meetings, now: input.now,
+            dismissedIDs: input.dismissedIDs, leadMinutes: input.leadMinutes
         )
         guard let next = candidates.first else {
             return .hide
@@ -215,29 +259,55 @@ public enum Scheduler {
     /// The pill outlives the card. Closing the card says "stop covering my
     /// screen", not "forget the meeting", so a dismissed meeting keeps a
     /// countdown up in the menu bar until it starts.
+    /// A meeting that has started and was never answered keeps the pill — it
+    /// reads "now" rather than a countdown. Answering it is what stops the
+    /// pill, and only once it has started: a card closed before the meeting
+    /// begins still counts down, because closing the card says "stop covering
+    /// my screen", not "forget the meeting".
     public static func pill(
-        in meetings: [UpcomingMeeting], current: UpcomingMeeting?, leadMinutes: Int, now: Date
+        in meetings: [UpcomingMeeting],
+        leadMinutes: Int,
+        now: Date,
+        dismissedIDs: Set<String> = []
     ) -> Pill? {
-        let watched = meetings.first { m in
-            guard m.id != current?.id, m.start > now else { return false }
-            return m.start.timeIntervalSince(now) <= Double(leadMinutes * 60)
+        // Same leadership order as the card: an imminent meeting outranks a
+        // missed one, so a countdown is never replaced by "now" for a meeting
+        // the user has already lost.
+        if let upcoming = meetings.first(where: {
+            $0.end > now && $0.start > now
+                && $0.start.timeIntervalSince(now) <= Double(leadMinutes * 60)
+        }) {
+            let seconds = upcoming.start.timeIntervalSince(now)
+            let minutes = Int((seconds / 60).rounded(.up))
+            return Pill(
+                text: minutes <= 1 ? "1 min" : "\(minutes) min",
+                urgent: seconds <= 60
+            )
         }
-        guard let watched else { return nil }
-        let seconds = watched.start.timeIntervalSince(now)
-        let minutes = Int((seconds / 60).rounded(.up))
-        return Pill(
-            text: minutes <= 1 ? "1 min" : "\(minutes) min",
-            urgent: seconds <= 60
-        )
+
+        // Started. Answered means the user dealt with it; otherwise they are
+        // late for it and the pill is the only thing still saying so.
+        let missed = meetings.first { m in
+            m.end > now && m.start <= now
+                && !dismissedIDs.contains(m.id)
+                && m.start >= now.addingTimeInterval(-missedGrace)
+        }
+        guard missed != nil else { return nil }
+        return Pill(text: "now", urgent: true, started: true)
     }
 
     public struct Pill: Equatable, Sendable {
         public let text: String
         public let urgent: Bool
+        /// The meeting is under way and unanswered, so `text` is "now" rather
+        /// than a countdown. Carried as a flag because the accessibility
+        /// label reads as a sentence, and "Next meeting in now" is not one.
+        public let started: Bool
 
-        public init(text: String, urgent: Bool) {
+        public init(text: String, urgent: Bool, started: Bool = false) {
             self.text = text
             self.urgent = urgent
+            self.started = started
         }
     }
 }

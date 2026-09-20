@@ -23,6 +23,12 @@ final class CalendarSource {
 
     var onChange: (([UpcomingMeeting]) -> Void)?
 
+    /// How many calendars EventKit currently reports for events — exposed
+    /// for the harness journal's `calendars counted` event (U8; R13), read
+    /// by `Coordinator` once per fetch, right alongside the meetings that
+    /// same fetch produced.
+    var calendarCount: Int { store.calendars(for: .event).count }
+
     func requestAccess() async -> Bool {
         do {
             authorized = try await store.requestFullAccessToEvents()

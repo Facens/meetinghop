@@ -13,16 +13,23 @@ import Foundation
 /// exist at all (`swift run`) — so that walk-up has nothing to find and is
 /// deliberately not ported here.
 ///
-/// `CFBundleVersion` is deliberately not read: `packaging/bundle.sh` stamps
-/// one `__VERSION__` placeholder into both keys (see
-/// `BundleVersionTests.runBundleVersionTests`), so the two keys are identical
-/// by construction and there is nothing a second read would add.
+/// `CFBundleVersion` is deliberately not read: since the three release
+/// channels landed (R20 / KTD10, as amended), the two keys are no longer
+/// identical. `packaging/bundle.sh` stamps `CFBundleShortVersionString` with
+/// the version as written and derives `CFBundleVersion` from it — a fourth,
+/// numeric component that breaks Sparkle's tie between a pre-release and its
+/// final (see `packaging/version.sh` and
+/// `BundleVersionTests.runBundleVersionTests`). `CFBundleShortVersionString`
+/// is the one a person reads, so it is the one this accessor returns.
 public enum AppVersion {
     /// What `swift run` sees: no Info.plist exists outside an assembled
-    /// bundle, so there is no real version to report. Clearly marked as a
-    /// fallback rather than an empty string, so it cannot be mistaken for a
-    /// real (if blank) version number.
-    public static let developmentFallback = "dev"
+    /// bundle, so there is no real version to report. This is also what
+    /// `packaging/bundle.sh` stamps `CFBundleShortVersionString` with when
+    /// `make bundle` runs with no `VERSION` (see the Makefile's default) —
+    /// a local build is an alpha by definition — so `display()` reports the
+    /// same string a fallback local build would carry, and `0.0.0` is never
+    /// a version that ships, so it cannot be mistaken for a real release.
+    public static let developmentFallback = "0.0.0-alpha"
 
     /// - Parameter bundle: the bundle to read the version from. Defaults to
     ///   `Bundle.main` — the running app in a real build, a bundle with no

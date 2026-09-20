@@ -148,20 +148,20 @@ func runSchedulerTests(_ t: TestRunner) {
         t.expectEqual(Scheduler.currentMeeting(in: [m], now: base.addingTimeInterval(30 * 60)), nil, "a meeting is no longer in progress at exactly its end time")
     }
 
-    // MARK: - nextCandidate's undocumented 30-second grace window
+    // MARK: - nextCandidate's grace window for a meeting that has started
 
     do {
-        let justStarted = zoomMeeting("grace-29", start: base.addingTimeInterval(-29), end: base.addingTimeInterval(30 * 60), meetingID: "6")
+        let justStarted = zoomMeeting("grace-inside", start: base.addingTimeInterval(-Scheduler.missedGrace), end: base.addingTimeInterval(30 * 60), meetingID: "6")
         t.expectEqual(
-            Scheduler.nextCandidate(after: nil, in: [justStarted], now: base, dismissedIDs: []),
+            Scheduler.nextCandidate(in: [justStarted], now: base, dismissedIDs: [], leadMinutes: 5),
             justStarted,
-            "a meeting that started 29 seconds ago is still a next-candidate (inside the 30s grace window)"
+            "a meeting still inside the missed grace window is a next-candidate"
         )
-        let startedEarlier = zoomMeeting("grace-31", start: base.addingTimeInterval(-31), end: base.addingTimeInterval(30 * 60), meetingID: "7")
+        let startedEarlier = zoomMeeting("grace-outside", start: base.addingTimeInterval(-Scheduler.missedGrace - 1), end: base.addingTimeInterval(30 * 60), meetingID: "7")
         t.expectEqual(
-            Scheduler.nextCandidate(after: nil, in: [startedEarlier], now: base, dismissedIDs: []),
+            Scheduler.nextCandidate(in: [startedEarlier], now: base, dismissedIDs: [], leadMinutes: 5),
             nil,
-            "a meeting that started 31 seconds ago falls outside the grace window"
+            "one second past the grace window it is no longer a next-candidate"
         )
     }
 
@@ -233,39 +233,167 @@ func runSchedulerTests(_ t: TestRunner) {
 
     do {
         let watched = zoomMeeting("pill-watched", start: base.addingTimeInterval(3 * 60), end: base.addingTimeInterval(33 * 60), meetingID: "11")
-        let pill = Scheduler.pill(in: [watched], current: nil, leadMinutes: 5, now: base)
+        let pill = Scheduler.pill(in: [watched], leadMinutes: 5, now: base)
         t.expectEqual(pill, Scheduler.Pill(text: "3 min", urgent: false), "the pill is present for a meeting whose card was dismissed and has not started")
     }
     do {
-        // "started" here means now has reached the meeting's own start time —
-        // pill has no dismissedIDs parameter, so this characterizes "the
-        // pill ignores dismissal entirely" rather than proving dismissal
-        // specifically has no effect; see the report.
+        // A meeting the user never answered does not stop mattering when the
+        // clock reaches its start — that is the moment they are late for it.
         let watched = zoomMeeting("pill-starts", start: base, end: base.addingTimeInterval(30 * 60), meetingID: "12")
-        let atStart = Scheduler.pill(in: [watched], current: nil, leadMinutes: 5, now: base)
-        t.expectEqual(atStart, nil, "the pill disappears once the meeting starts (now == start)")
+        let atStart = Scheduler.pill(in: [watched], leadMinutes: 5, now: base)
+        t.expectEqual(atStart, Scheduler.Pill(text: "now", urgent: true, started: true), "the pill reads \"now\" for an unanswered meeting that has started")
 
-        let justBefore = Scheduler.pill(in: [watched], current: nil, leadMinutes: 5, now: base.addingTimeInterval(-1))
+        let justBefore = Scheduler.pill(in: [watched], leadMinutes: 5, now: base.addingTimeInterval(-1))
         t.expect(justBefore != nil, "the pill is still present one second before start")
+
+        // Bounded: the pill is a reminder, not a permanent badge. The
+        // menu-bar list keeps the meeting for the rest of its run.
+        let inGrace = base.addingTimeInterval(Scheduler.missedGrace)
+        t.expect(
+            Scheduler.pill(in: [watched], leadMinutes: 5, now: inGrace) != nil,
+            "the pill survives to exactly the end of the missed-meeting grace window"
+        )
+        let pastGrace = base.addingTimeInterval(Scheduler.missedGrace + 1)
+        t.expectEqual(
+            Scheduler.pill(in: [watched], leadMinutes: 5, now: pastGrace), nil,
+            "the pill gives up one second past the grace window"
+        )
     }
     do {
-        let watched = zoomMeeting("pill-current", start: base.addingTimeInterval(3 * 60), end: base.addingTimeInterval(33 * 60), meetingID: "13")
-        let pillForCurrent = Scheduler.pill(in: [watched], current: watched, leadMinutes: 5, now: base)
-        t.expectEqual(pillForCurrent, nil, "the pill never watches the meeting the user is already in")
+        // Answered and in progress: the user is in it, so there is nothing to
+        // remind them of.
+        let joined = zoomMeeting("pill-joined", start: base.addingTimeInterval(-3 * 60), end: base.addingTimeInterval(27 * 60), meetingID: "13")
+        let pillForJoined = Scheduler.pill(in: [joined], leadMinutes: 5, now: base, dismissedIDs: ["pill-joined"]
+        )
+        t.expectEqual(pillForJoined, nil, "the pill never watches a meeting the user has answered and is in")
+
+        // Answered before it started is the ordinary dismissed card: the
+        // countdown survives, because closing the card quietens the reminder
+        // rather than deleting it.
+        let dismissedAhead = zoomMeeting("pill-dismissed-ahead", start: base.addingTimeInterval(3 * 60), end: base.addingTimeInterval(33 * 60), meetingID: "17")
+        let stillCounting = Scheduler.pill(in: [dismissedAhead], leadMinutes: 5, now: base, dismissedIDs: ["pill-dismissed-ahead"]
+        )
+        t.expectEqual(stillCounting, Scheduler.Pill(text: "3 min", urgent: false), "a card dismissed before the meeting starts keeps its countdown")
+    }
+
+    // MARK: - A meeting that started unanswered is still offered
+
+    do {
+        // The reported bug: the meeting begins, the user has not joined, and
+        // every surface drops it — the candidate scan because `currentMeeting`
+        // claimed it, and again because it started more than 30 seconds ago.
+        let missed = zoomMeeting("missed", title: "Sprint review", start: base.addingTimeInterval(-4 * 60), end: base.addingTimeInterval(26 * 60), meetingID: "20")
+        let decision = Scheduler.decide(makeInput(now: base, meetings: [missed], leadMinutes: 5))
+        guard case .present(let card) = decision else {
+            t.expect(false, "a meeting that started four minutes ago and was never answered should still be offered, got \(decision)")
+            return
+        }
+        t.expectEqual(card.items.count, 1, "the missed meeting takes the only row")
+        t.expectEqual(card.items[0].meeting.id, "missed", "the row offers the missed meeting")
+        t.expectEqual(card.minutes, -4, "the countdown has gone negative — the HUD renders it as minutes ago")
+        t.expect(card.urgent, "a meeting already under way is urgent")
+        t.expect(!card.isLeavingAnother, "the missed meeting is not something the user is leaving — it is the one they are late for")
+
+        // Bounded, so a long unanswered block does not camp a card all day.
+        let atEdge = missed.start.addingTimeInterval(Scheduler.missedGrace)
+        t.expect(
+            Scheduler.decide(makeInput(now: atEdge, meetings: [missed], leadMinutes: 5)) != .hide,
+            "still offered at exactly the end of the grace window"
+        )
+        let pastEdge = atEdge.addingTimeInterval(1)
+        t.expectEqual(
+            Scheduler.decide(makeInput(now: pastEdge, meetings: [missed], leadMinutes: 5)), .hide,
+            "one second past the grace window the card gives up — the menu-bar list is what keeps it"
+        )
+
+        // The grace window has to hold for an offer carried forward on every
+        // tick too — that is the only shape the running app ever has, and
+        // `decide` consults stickiness before it consults candidacy.
+        t.expectEqual(
+            Scheduler.decide(makeInput(now: pastEdge, meetings: [missed], leadMinutes: 5, offered: [missed])),
+            .hide,
+            "a carried-forward offer nobody answered ages out of the card at the same grace window"
+        )
+
+        // Answering is what retires it, not the clock.
+        t.expectEqual(
+            Scheduler.decide(makeInput(now: base, meetings: [missed], leadMinutes: 5, dismissedIDs: ["missed"])), .hide,
+            "a missed meeting the user has answered is not re-offered"
+        )
+    }
+
+    // MARK: - A missed meeting never shadows an imminent one
+
+    do {
+        // `meetings` is start-ascending, so the missed meeting comes first in
+        // the array. It must not come first in the decision: on Meet, Teams
+        // and Webex a join is invisible to the app, so the meeting the user is
+        // actually sitting in is never in `dismissedIDs`, and letting it lead
+        // would take every back-to-back handoff off the card (KTD7).
+        let stale = zoomMeeting("stale", title: "Standup", start: base.addingTimeInterval(-3 * 60), end: base.addingTimeInterval(27 * 60), meetingID: "23")
+        let imminent = zoomMeeting("imminent", start: base.addingTimeInterval(2 * 60), end: base.addingTimeInterval(32 * 60), meetingID: "24")
+
+        t.expectEqual(
+            Scheduler.nextCandidate(in: [stale, imminent], now: base, dismissedIDs: [], leadMinutes: 5)?.id,
+            "imminent",
+            "an upcoming meeting inside the lead window leads over one that has already started"
+        )
+
+        guard case .present(let card) = Scheduler.decide(makeInput(
+            now: base, meetings: [stale, imminent], leadMinutes: 5
+        )) else {
+            t.expect(false, "the imminent meeting should still be offered alongside a missed one")
+            return
+        }
+        t.expectEqual(card.items.count, 1, "the missed meeting is a different slot, not a second row")
+        t.expectEqual(card.items[0].meeting.id, "imminent", "the card offers the imminent meeting, not the missed one")
+
+        t.expectEqual(
+            Scheduler.pill(in: [stale, imminent], leadMinutes: 5, now: base),
+            Scheduler.Pill(text: "2 min", urgent: false),
+            "the pill counts down to the imminent meeting rather than reading \"now\" for the missed one"
+        )
+
+        // With nothing imminent, the missed meeting leads again.
+        let laterOn = zoomMeeting("later", start: base.addingTimeInterval(4 * 60 * 60), end: base.addingTimeInterval(5 * 60 * 60), meetingID: "25")
+        t.expectEqual(
+            Scheduler.nextCandidate(in: [stale, laterOn], now: base, dismissedIDs: [], leadMinutes: 5)?.id,
+            "stale",
+            "a missed meeting leads when nothing upcoming is inside the lead window"
+        )
+    }
+
+    do {
+        // The handoff still works while genuinely in a joined call: the
+        // meeting in progress is answered, so it is not re-offered as a
+        // missed one, and the next meeting is what the card shows.
+        let joined = zoomMeeting("joined", title: "Standup", start: base.addingTimeInterval(-3 * 60), end: base.addingTimeInterval(2 * 60), meetingID: "21")
+        let next = zoomMeeting("after", start: base.addingTimeInterval(2 * 60), end: base.addingTimeInterval(32 * 60), meetingID: "22")
+        let decision = Scheduler.decide(makeInput(
+            now: base, meetings: [joined, next], leadMinutes: 1, endingLeadMinutes: 5,
+            dismissedIDs: ["joined"]
+        ))
+        guard case .present(let card) = decision else {
+            t.expect(false, "the handoff card should still appear while in an answered meeting, got \(decision)")
+            return
+        }
+        t.expectEqual(card.items.count, 1, "only the next meeting is offered, not the one already answered")
+        t.expectEqual(card.items[0].meeting.id, "after", "the handoff offers the next meeting")
+        t.expect(card.isLeavingAnother, "the card says what is being left")
     }
     do {
         let almostUrgent = zoomMeeting("pill-59s", start: base.addingTimeInterval(59), end: base.addingTimeInterval(30 * 60), meetingID: "14")
-        let p59 = Scheduler.pill(in: [almostUrgent], current: nil, leadMinutes: 5, now: base)
+        let p59 = Scheduler.pill(in: [almostUrgent], leadMinutes: 5, now: base)
         t.expectEqual(p59, Scheduler.Pill(text: "1 min", urgent: true), "the pill is urgent under a minute out (59s)")
 
         let exactly60 = zoomMeeting("pill-60s", start: base.addingTimeInterval(60), end: base.addingTimeInterval(30 * 60), meetingID: "15")
-        let p60 = Scheduler.pill(in: [exactly60], current: nil, leadMinutes: 5, now: base)
+        let p60 = Scheduler.pill(in: [exactly60], leadMinutes: 5, now: base)
         t.expectEqual(p60, Scheduler.Pill(text: "1 min", urgent: true), "the pill is still urgent at exactly 60 seconds (<= 60)")
 
         // Characterized, not asserted as a bug: 61s rounds up to "2 min" via
         // `.rounded(.up)` and stops being urgent.
         let past60 = zoomMeeting("pill-61s", start: base.addingTimeInterval(61), end: base.addingTimeInterval(30 * 60), meetingID: "16")
-        let p61 = Scheduler.pill(in: [past60], current: nil, leadMinutes: 5, now: base)
+        let p61 = Scheduler.pill(in: [past60], leadMinutes: 5, now: base)
         t.expectEqual(p61, Scheduler.Pill(text: "2 min", urgent: false), "61 seconds out is no longer urgent and rounds up to 2 min")
     }
 }
@@ -352,14 +480,14 @@ func runConcurrentMeetingTests(_ t: TestRunner) {
         let a = meeting("a", title: "A", start: start, end: end)
         let straggler = meeting("b", title: "B", start: start.addingTimeInterval(60), end: end)
         t.expectEqual(
-            Scheduler.nextCandidates(after: nil, in: [a, straggler], now: base, dismissedIDs: []).count,
+            Scheduler.nextCandidates(in: [a, straggler], now: base, dismissedIDs: [], leadMinutes: 5).count,
             2,
             "a start exactly one minute later is still the same slot"
         )
 
         let separate = meeting("c", title: "C", start: start.addingTimeInterval(61), end: end)
         t.expectEqual(
-            Scheduler.nextCandidates(after: nil, in: [a, separate], now: base, dismissedIDs: []).map(\.id),
+            Scheduler.nextCandidates(in: [a, separate], now: base, dismissedIDs: [], leadMinutes: 5).map(\.id),
             ["a"],
             "a start 61 seconds later is a different slot and waits its turn"
         )

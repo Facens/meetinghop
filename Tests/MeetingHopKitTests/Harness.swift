@@ -238,3 +238,27 @@ func runProcess(
 func singleQuoted(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
+
+/// Resolves a tool the harness scripts call by name, the way they resolve it
+/// themselves: from PATH, via `command -v`, not from a fixed location.
+///
+/// The hardcoded `/usr/bin/jq` this replaces passed on macOS 26, which ships
+/// jq there, and failed on the macos-14 CI runner, which does not — taking the
+/// whole suite with it, because the guard that found it missing returns before
+/// any test runs. harness/lib/common.sh's own `require_cmd jq` has always
+/// looked on PATH, so the fixed path was asserting something the harness never
+/// required.
+func toolOnPath(_ name: String) -> String? {
+    let which = Process()
+    which.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    which.arguments = ["sh", "-c", "command -v \(name)"]
+    let pipe = Pipe()
+    which.standardOutput = pipe
+    which.standardError = FileHandle.nullDevice
+    do { try which.run() } catch { return nil }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    which.waitUntilExit()
+    guard which.terminationStatus == 0 else { return nil }
+    let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    return path.isEmpty ? nil : path
+}

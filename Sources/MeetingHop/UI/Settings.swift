@@ -4,96 +4,85 @@ import MeetingHopKit
 
 // MARK: - Store
 
-/// Persisted app preferences, backed directly by `UserDefaults.standard`.
-/// Every property writes through on change, so nothing else in the app has
-/// to remember to save — set it and it's durable.
+/// Persisted app preferences, backed by the active `UserDefaults` — KTD4:
+/// `.standard` on a normal launch, or the suite `-MeetingHopDefaultsSuite
+/// <name>` names on the app-fresh and stranger tiers, resolved once by
+/// `AppIdentity.activeDefaults()`. Every property writes through on change,
+/// so nothing else in the app has to remember to save — set it and it's
+/// durable, in whichever domain this instance was built with.
 @MainActor
 final class SettingsStore: ObservableObject {
-    static let shared = SettingsStore()
+    static let shared = SettingsStore(defaults: AppIdentity.activeDefaults())
 
     // Names and identifier live in MeetingHopKit.AppIdentity, so this
     // target has no literal of its own left to drift from the plist (R19).
+    // The clamp and the fallback-on-type-mismatch reads live there too, as
+    // `AppIdentity.SettingsStorage` — this target has no logic of its own
+    // left to drift from what the Kit's test suite proves (U8).
     private enum Keys {
         static let leadMinutes = AppIdentity.DefaultsKeys.leadMinutes
         static let endingLeadMinutes = AppIdentity.DefaultsKeys.endingLeadMinutes
         static let hideWhileSharing = AppIdentity.DefaultsKeys.hideWhileSharing
     }
 
-    // Immutable Int/Bool constants from the Kit, so `nonisolated` is safe
-    // even though they're declared on a @MainActor type — `registerDefaults()`
-    // (also `nonisolated`, so it can run at launch before any actor hop) needs
-    // to read them without a MainActor context.
-    private nonisolated static let defaultLeadMinutes = AppIdentity.DefaultsValues.leadMinutes
-    private nonisolated static let defaultEndingLeadMinutes = AppIdentity.DefaultsValues.endingLeadMinutes
-    private nonisolated static let defaultHideWhileSharing = AppIdentity.DefaultsValues.hideWhileSharing
-    private static let validRange = 1...15
+    /// The `UserDefaults` every property below reads from and writes
+    /// through. `let`, not looked up again per access: KTD4 resolves it
+    /// once, at construction, so a run never straddles two domains because
+    /// an argument was read at two different moments.
+    let defaults: UserDefaults
 
     /// How many minutes before a meeting starts the card appears.
-    @Published var leadMinutes: Int = SettingsStore.storedInt(
-        forKey: Keys.leadMinutes, default: defaultLeadMinutes
-    ) {
+    @Published var leadMinutes: Int {
         didSet {
-            let clamped = SettingsStore.clamp(leadMinutes)
+            let clamped = AppIdentity.SettingsStorage.clampMinutes(leadMinutes)
             if clamped != leadMinutes {
                 leadMinutes = clamped   // re-enters didSet once, then converges
                 return
             }
-            UserDefaults.standard.set(clamped, forKey: Keys.leadMinutes)
+            defaults.set(clamped, forKey: Keys.leadMinutes)
         }
     }
 
     /// How many minutes before the current meeting ends the handoff card appears.
-    @Published var endingLeadMinutes: Int = SettingsStore.storedInt(
-        forKey: Keys.endingLeadMinutes, default: defaultEndingLeadMinutes
-    ) {
+    @Published var endingLeadMinutes: Int {
         didSet {
-            let clamped = SettingsStore.clamp(endingLeadMinutes)
+            let clamped = AppIdentity.SettingsStorage.clampMinutes(endingLeadMinutes)
             if clamped != endingLeadMinutes {
                 endingLeadMinutes = clamped
                 return
             }
-            UserDefaults.standard.set(clamped, forKey: Keys.endingLeadMinutes)
+            defaults.set(clamped, forKey: Keys.endingLeadMinutes)
         }
     }
 
-    @Published var hideWhileSharing: Bool = SettingsStore.storedBool(
-        forKey: Keys.hideWhileSharing, default: defaultHideWhileSharing
-    ) {
+    @Published var hideWhileSharing: Bool {
         didSet {
-            UserDefaults.standard.set(hideWhileSharing, forKey: Keys.hideWhileSharing)
+            defaults.set(hideWhileSharing, forKey: Keys.hideWhileSharing)
         }
     }
 
-    private init() {}
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+        self.leadMinutes = AppIdentity.SettingsStorage.storedInt(
+            defaults, forKey: Keys.leadMinutes, default: AppIdentity.DefaultsValues.leadMinutes
+        )
+        self.endingLeadMinutes = AppIdentity.SettingsStorage.storedInt(
+            defaults, forKey: Keys.endingLeadMinutes, default: AppIdentity.DefaultsValues.endingLeadMinutes
+        )
+        self.hideWhileSharing = AppIdentity.SettingsStorage.storedBool(
+            defaults, forKey: Keys.hideWhileSharing, default: AppIdentity.DefaultsValues.hideWhileSharing
+        )
+    }
 
     /// Registers fallback defaults with `UserDefaults`. Safe to call at
     /// launch, before anything reads a `SettingsStore` property — the
-    /// per-property readers below carry their own `default:` too, so this is
-    /// belt-and-braces rather than load-bearing.
-    nonisolated static func registerDefaults() {
-        UserDefaults.standard.register(defaults: [
-            Keys.leadMinutes: defaultLeadMinutes,
-            Keys.endingLeadMinutes: defaultEndingLeadMinutes,
-            Keys.hideWhileSharing: defaultHideWhileSharing,
-        ])
-    }
-
-    private static func clamp(_ value: Int) -> Int {
-        min(max(value, validRange.lowerBound), validRange.upperBound)
-    }
-
-    /// `object(forKey:)` + a conditional cast never traps, unlike
-    /// `integer(forKey:)`'s silent-zero-on-type-mismatch: a stray non-Int
-    /// value written by a future version falls back to `default` instead of
-    /// quietly becoming 0 and failing the 1...15 clamp in a confusing way.
-    private static func storedInt(forKey key: String, default value: Int) -> Int {
-        guard let stored = UserDefaults.standard.object(forKey: key) as? Int else { return value }
-        return clamp(stored)
-    }
-
-    private static func storedBool(forKey key: String, default value: Bool) -> Bool {
-        guard let stored = UserDefaults.standard.object(forKey: key) as? Bool else { return value }
-        return stored
+    /// per-property readers above carry their own `default:` too, so this is
+    /// belt-and-braces rather than load-bearing. `nonisolated`, so it can run
+    /// at launch before any actor hop; `on` defaults to the same
+    /// `AppIdentity.activeDefaults()` resolution `.shared` uses, so a caller
+    /// that wants the two to agree does not have to pass anything.
+    nonisolated static func registerDefaults(on defaults: UserDefaults = AppIdentity.activeDefaults()) {
+        AppIdentity.SettingsStorage.registerDefaults(on: defaults)
     }
 }
 
@@ -134,9 +123,11 @@ struct SettingsView: View {
                 Stepper(value: $store.leadMinutes, in: 1...15) {
                     minuteLabel(store.leadMinutes, explanation: "Before the next meeting starts")
                 }
+                .accessibilityIdentifier(AccessibilityID.Settings.leadMinutesStepper)
                 Stepper(value: $store.endingLeadMinutes, in: 1...15) {
                     minuteLabel(store.endingLeadMinutes, explanation: "Before the current meeting ends")
                 }
+                .accessibilityIdentifier(AccessibilityID.Settings.endingLeadMinutesStepper)
             }
 
             Section {
@@ -148,10 +139,12 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                .accessibilityIdentifier(AccessibilityID.Settings.hideWhileSharingToggle)
             }
 
             Section {
                 Toggle("Launch at login", isOn: $launchAtLoginLocal.value)
+                    .accessibilityIdentifier(AccessibilityID.Settings.launchAtLoginToggle)
                     .onChange(of: launchAtLogin) { _, newValue in
                         LaunchAtLogin.set(newValue)
                         // `set` only logs on failure (Support.swift), it
@@ -212,6 +205,7 @@ final class SettingsWindowController {
         // `show()` can reshow it instead of rebuilding SwiftUI state.
         newWindow.isReleasedWhenClosed = false
         newWindow.center()
+        newWindow.setAccessibilityIdentifier(AccessibilityID.Settings.window)
         window = newWindow
 
         newWindow.makeKeyAndOrderFront(nil)

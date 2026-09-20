@@ -63,6 +63,13 @@ notarized, so it opens with no warning.
 
 **Apple Silicon only.** The build is arm64 and does not run on an Intel Mac.
 
+**Betas.** A release marked Pre-release on the Releases page is a beta: built,
+signed, and notarized the same way as a final release, just published first
+so people can try it before it ships to everyone. It's published on the beta
+update channel and gets superseded once the matching final release lands. If
+you want to try one early, install it by hand the same way as above; once
+in-app updates ship, a Settings toggle will opt a copy into betas instead.
+
 ## Build from source
 
 **Xcode is not required.** Command Line Tools plus SwiftPM is the whole
@@ -90,6 +97,77 @@ Early. The overlay, the calendar reading, the link parsing, and the Zoom state
 reading are working; the test suite covering them is being built out alongside
 this restructure. Packaging, CI, and the release pipeline exist; no version
 has shipped yet.
+
+## Test surface
+
+A release is exercised on a clean machine before it ships, by a script that
+clicks the app rather than calling into it. A script cannot see what the app
+decided, only what it drew — so the app can be asked, at launch, to keep a
+journal of what it detected, what it is showing and what you chose. It is a
+read-only record: it performs no action and changes nothing about how the app
+behaves.
+
+**It is off, and only you can turn it on.** There is one switch, a preference
+key, and it names a file:
+
+```sh
+defaults write dev.facens.meetinghop harnessJournal journal.ndjson   # on
+defaults delete dev.facens.meetinghop harnessJournal                 # off
+```
+
+The value is a **file name, not a path**. MeetingHop writes it in one fixed
+place — `~/Library/Application Support/dev.facens.meetinghop/harness/` — and a
+value containing `/` or `..` is refused outright: nothing is written anywhere,
+and one line in the app's log is the only trace. The file is created at mode
+0600, is never written through a symbolic link, and is only ever appended to.
+
+Each line is one JSON object: a sequence number, a timestamp, the schema
+version, the build, and an event with its data. The events are the app's own
+decisions — `calendar access`, `calendars counted`, `upcoming counted`, `menu
+bar state`, `card shown`, `card concealed`, `join fired`, `dismissed` — and
+the values are the ones the popover and the card were already showing you:
+whether calendar access is granted, how many calendars and how many upcoming
+meetings were found, whether the countdown pill is up, and whether a join
+opened. **A meeting's title, its join password and its raw join URL never
+appear.** A title is recorded only as a short hash, a joined meeting is
+recorded as its scheme and host (`zoommtg`/`https`, `zoom.us`) plus a hash of
+its id, and the password field of a meeting link is never serialized at all.
+
+Three more things worth knowing before you switch it on:
+
+- **It stops growing.** The journal is capped at 1 MiB; past that, the oldest
+  lines are dropped to make room for the newest. A single value longer than
+  512 characters is shortened, so one long error message cannot push a run's
+  own history out of the file.
+- **It cleans up after itself.** Launch MeetingHop with the key unset and any
+  journal left in that directory is deleted. Files in there that are not
+  journals are left alone.
+- **It is readable by anything running as you.** The directory carries no
+  secret and confinement is not the point — any process that could read it
+  could also have set the key in the first place. The point is that the app
+  writes nothing outside that one directory.
+
+**Nothing listens.** There is no socket, no port and no network traffic; the
+journal is a file, and the only way to read it is to read it.
+
+**Every control this exercises carries a stable accessibility identifier.**
+The harness drives the built app by `AXIdentifier` alone — never a
+coordinate, never a label — so the same identifiers a screen reader would
+see are also what the script clicks. They're part of the app's contract with
+that script, not incidental UI detail; see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the rule.
+
+**Every release carries the redacted result of a real run.** Before a
+release is presented as current, this exact asset — the same zip you'd
+download — is installed and driven through every scenario on a vanilla
+macOS VM that never saw this machine before, and the release carries the
+result: `report.public.json`, attached to it on GitHub. It holds a verdict,
+a list of finding codes, the asset's SHA-256, which build of the golden
+image it ran against (the macOS and Claude Code versions, and when it was
+built), the scenario names, and a run id — and nothing else. No value in it
+may contain a `/`, so no screenshot, no host path and no hostname ever
+reaches it, and a finding is always one of a fixed, published set of codes,
+never free text.
 
 ## Licence
 

@@ -8,6 +8,12 @@ struct MenuBarModel {
     var meetings: [UpcomingMeeting] = []
     var currentTitle: String?
     var calendarAuthorized: Bool = true
+    /// How many calendars Calendar.app holds. The popover needs it to tell
+    /// "Calendar.app is empty" from "nothing left today" — the same
+    /// distinction the journal has drawn since U8, where `calendars counted`
+    /// and `upcoming counted` are two events precisely because they are two
+    /// different problems for the user.
+    var calendarCount: Int = 0
     /// Shown in the menu bar itself. Set when a meeting is close enough to
     /// matter, including one whose card the user has already closed: dismissing
     /// the card should quieten the reminder, not delete it.
@@ -16,6 +22,19 @@ struct MenuBarModel {
     struct Pill {
         var text: String
         var urgent: Bool
+        /// The meeting is under way and unanswered — see `Scheduler.Pill`.
+        var started: Bool = false
+    }
+
+    /// What the popover shows in place of a meeting list, or `nil` when it
+    /// has meetings to show. The rule is `MeetingHopKit.Onboarding`'s, so the
+    /// test suite can reach it; this is only where the view asks.
+    var emptyState: CalendarEmptyState? {
+        Onboarding.emptyState(
+            accessGranted: calendarAuthorized,
+            calendarCount: calendarCount,
+            meetingCount: meetings.count
+        )
     }
 
     /// Stated, not measured. `NSHostingController.view.fittingSize` is zero
@@ -36,11 +55,15 @@ struct MenuBarModel {
         let dividers: CGFloat = 2
 
         let body: CGFloat
-        if !calendarAuthorized {
-            body = 96
-        } else if meetings.isEmpty {
-            body = 68
-        } else {
+        // Each empty state gets its own height rather than one shared number:
+        // the two that carry a button are two lines of text plus a control,
+        // and "nothing else today" is a single line. Sharing one figure
+        // either clips the first two or leaves a hole under the third.
+        switch emptyState {
+        case .accessDenied: body = 124
+        case .noCalendars: body = 124
+        case .noMeetings: body = 68
+        case nil:
             body = min(CGFloat(meetings.count) * 45 + CGFloat(max(0, meetings.count - 1)), 260)
         }
         return NSSize(width: width, height: header + dividers + body + footer)
@@ -57,6 +80,7 @@ final class MenuBarState: ObservableObject {
 struct MenuBarView: View {
     @ObservedObject var state: MenuBarState
     var onJoin: (UpcomingMeeting) -> Void
+    var onCalendarHelp: (GuidanceState) -> Void
     var onSettings: () -> Void
     var onPreview: () -> Void
     var onQuit: () -> Void
@@ -71,10 +95,15 @@ struct MenuBarView: View {
 
             Divider().opacity(0.6)
 
-            if !state.model.calendarAuthorized {
-                message("MeetingHop needs access to your calendar to find meetings. Grant it in System Settings, under Privacy & Security.")
-            } else if state.model.meetings.isEmpty {
-                message("Nothing else today. The card appears on its own when a meeting is close.")
+            if let empty = state.model.emptyState {
+                // One branch for all three empty states now, where there used
+                // to be two: an empty Calendar.app and a quiet afternoon both
+                // read "Nothing else today" before this, which is true of one
+                // of them. The wording is MeetingHopKit's (`GuidanceCopy`),
+                // the same wording the onboarding card uses, so the popover
+                // cannot drift into saying something else about the same
+                // situation.
+                emptyBody(empty)
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
@@ -126,6 +155,33 @@ struct MenuBarView: View {
             .padding(.vertical, 16)
     }
 
+    /// An empty state's sentence, plus the way out of it when there is one.
+    ///
+    /// This is where the guidance lives permanently, after the onboarding
+    /// card has been answered and gone: the card is shown once and never
+    /// nags, so the same route has to stay reachable somewhere the user can
+    /// go back to on purpose. "Nothing else today" gets no button — there is
+    /// nothing for the user to fix about an afternoon with no meetings in it.
+    @ViewBuilder
+    private func emptyBody(_ empty: CalendarEmptyState) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(GuidanceCopy.popover(empty))
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let guidance = empty.guidance {
+                Button(GuidanceCopy.action(guidance)) { onCalendarHelp(guidance) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .accessibilityIdentifier(AccessibilityID.MenuBar.calendarHelp)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 16)
+    }
+
     private var footer: some View {
         VStack(alignment: .leading, spacing: 0) {
             versionRow
@@ -151,11 +207,14 @@ struct MenuBarView: View {
     private var buttonRow: some View {
         HStack(spacing: 14) {
             Button("Settings…", action: onSettings)
+                .accessibilityIdentifier(AccessibilityID.MenuBar.settings)
             // Here because the card only appears on its own schedule, and
             // judging how it looks should not mean waiting for a meeting.
             Button("Preview card", action: onPreview)
+                .accessibilityIdentifier(AccessibilityID.MenuBar.previewCard)
             Spacer()
             Button("Quit", action: onQuit)
+                .accessibilityIdentifier(AccessibilityID.MenuBar.quit)
         }
         .buttonStyle(.plain)
         .font(.system(size: 11.5))
@@ -215,12 +274,17 @@ private struct MeetingRow: View {
                 .padding(.vertical, 3.5)
                 .background(Capsule().fill(accent))
                 .opacity(hovered ? 1 : 0)
+                .accessibilityIdentifier(AccessibilityID.MenuBar.row(meeting))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
         .background(hovered ? Color.primary.opacity(0.05) : .clear)
         .onHover { hovered = $0 }
+        // Two controls in one row — the clock/title text and the Join
+        // button — kept addressable as two identifiers rather than merged
+        // into one (KTD9/U5's pattern).
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -239,6 +303,9 @@ final class MenuBarController: NSObject {
 
     var onJoin: ((UpcomingMeeting) -> Void)?
     var onPreviewCard: (() -> Void)?
+    /// The popover's own way out of an empty state — the same action the
+    /// onboarding card's button takes.
+    var onCalendarHelp: ((GuidanceState) -> Void)?
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -248,6 +315,7 @@ final class MenuBarController: NSObject {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(toggle)
         statusItem.button?.toolTip = "MeetingHop — your next meeting"
+        statusItem.button?.setAccessibilityIdentifier(AccessibilityID.MenuBar.statusItem)
         renderIdleIcon()
 
         // .transient, unlike the sibling app: it closes on an outside click and
@@ -263,6 +331,14 @@ final class MenuBarController: NSObject {
                     self?.close()
                     self?.onJoin?(meeting)
                 },
+                onCalendarHelp: { [weak self] state in
+                    // Closed first, like every other control here: the page
+                    // that opens takes the foreground, and a transient
+                    // popover left behind it closes itself half a second
+                    // later anyway, which reads as a glitch.
+                    self?.close()
+                    self?.onCalendarHelp?(state)
+                },
                 onSettings: { [weak self] in
                     self?.close()
                     SettingsWindowController.shared.show()
@@ -275,7 +351,10 @@ final class MenuBarController: NSObject {
             )
         )
         popover.contentViewController = hosting
-
+        // The popover's own hosting content view is what makes it a
+        // findable "window" to System Events rather than an anonymous one
+        // (KTD9, mirroring AgentMenu's `Popover.container`).
+        hosting.view.setAccessibilityIdentifier(AccessibilityID.MenuBar.popover)
     }
 
 
@@ -387,7 +466,9 @@ final class MenuBarController: NSObject {
             )
             return true
         }
-        image.accessibilityDescription = "Next meeting in \(pill.text)"
+        image.accessibilityDescription = pill.started
+            ? "Meeting starting now"
+            : "Next meeting in \(pill.text)"
         return image
     }
 }

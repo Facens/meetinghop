@@ -265,7 +265,12 @@ struct HUDView: View {
                 // mouse or tab targets. A default action on every row would
                 // make Return fire whichever one SwiftUI picked.
                 .modifier(DefaultActionIfFirst(isFirst: item.id == model.items.first?.id))
+                .accessibilityIdentifier(AccessibilityID.HUD.join(item))
         }
+        // KTD9/U5's pattern: a row exposes more than one control (the title
+        // text and the Join button), and `.contain` keeps them addressable
+        // as two identifiers rather than one merged element.
+        .accessibilityElement(children: .contain)
     }
 
     /// The only way to make the card go away, short of joining. It never
@@ -287,6 +292,7 @@ struct HUDView: View {
         .onHover { closeHovered = $0 }
         .accessibilityLabel(model.isMultiple ? "Dismiss all" : "Dismiss")
         .help(model.isMultiple ? "Dismiss all" : "Dismiss")
+        .accessibilityIdentifier(AccessibilityID.HUD.close)
     }
 }
 

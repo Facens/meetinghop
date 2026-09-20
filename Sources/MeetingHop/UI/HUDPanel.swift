@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import MeetingHopKit
 
 /// The floating card's window. Non-activating, so clicking the card never
 /// pulls focus away from the meeting the user is in.
@@ -20,8 +21,15 @@ enum HUDWindow {
     /// in a borderless panel it has nothing to sample and renders as flat grey
     /// with opaque corners. The window shadow is likewise AppKit's: a SwiftUI
     /// shadow is clipped at the window bounds, so it never appears at all.
+    ///
+    /// `identifier` is required rather than defaulted to `HUD.panel`: two
+    /// different panels are built from this one function now (the meeting card
+    /// and the onboarding card), and `findByIdentifier` in
+    /// `harness/guest/ax.applescript` returns the first window it walks to —
+    /// so a second panel that silently inherited the card's identifier would
+    /// make a Join click land on whichever of the two the walk reached first.
     @MainActor
-    static func make(hosting: NSView) -> HUDPanel {
+    static func make(hosting: NSView, identifier: String) -> HUDPanel {
         let frame = NSRect(x: 0, y: 0, width: width, height: fittingHeight(of: hosting))
 
         let panel = HUDPanel(
@@ -39,6 +47,11 @@ enum HUDWindow {
         // AppKit derives the shadow from the content's alpha, so the masked
         // effect view below gives it the rounded shape for free.
         panel.hasShadow = true
+        // KTD9: the panel is a borderless NSPanel, not a SwiftUI view, so
+        // System Events needs its own identifier to find it as a "window"
+        // at all — the SwiftUI content's own identifiers are only reachable
+        // once the panel itself has been.
+        panel.setAccessibilityIdentifier(identifier)
 
         let blur = NSVisualEffectView(frame: frame)
         // .hudWindow, not .popover: a floating card over someone's work should read

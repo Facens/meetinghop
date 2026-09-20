@@ -37,6 +37,28 @@ just saves a round trip.
 The app target (`Sources/MeetingHop`) is where AppKit, SwiftUI, and EventKit
 belong — it's verified by running it, not by the test suite.
 
+## Accessibility identifiers are part of a control's contract
+
+Not incidental UI detail (KTD9). The black-box test harness drives the
+built app by `AXIdentifier` — never by coordinate, never by title — so
+every control a scenario clicks carries a stable identifier from the one
+builder in `Sources/MeetingHopKit/Support/AccessibilityID.swift`. Renaming
+or removing one is a harness-facing change, on purpose: it should be as
+deliberate as changing a public API. A dynamic identifier never embeds a
+raw calendar title, a filesystem path, or any other user-supplied free
+text — hash it instead, the way the builders already do — because an
+`AXIdentifier` sits in the same accessibility tree a screen reader walks,
+and a leaked automation log can capture it wholesale.
+
+One deliberate departure: a meeting row keys on a hash of the meeting's
+*id*, not its title. Two meetings can share a title — a recurring
+one-to-one happening twice in the same day is the ordinary case, not an
+edge one — and the harness's identifier lookup returns the first match it
+walks to, so a title-keyed row would silently send a scenario aimed at the
+second meeting to the first. The journal still hashes the title separately,
+where it records what was shown on screen — a different field answering a
+different question.
+
 ## Commit messages
 
 Conventional commits, scoped to match the module split:
