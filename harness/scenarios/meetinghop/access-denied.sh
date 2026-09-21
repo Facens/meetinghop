@@ -7,8 +7,8 @@
 #
 # R10/AE: a stranger installs MeetingHop, is shown the Calendar permission
 # prompt, and answers Don't Allow. Stated end state (R11's vocabulary): the
-# app records `calendar access` with `granted: false` — never retrying,
-# never popping a second prompt — and tells the user, unprompted, that it
+# app records `calendar access` with `granted: false` and `status: denied`
+# — never retrying, never popping a second prompt — and tells the user, unprompted, that it
 # was refused and how to undo that. macOS never asks a second time, so a
 # refusal the app stayed quiet about is a permanent, unexplained silence:
 # `guidance shown` with `state=access_denied` is the card that breaks it,
@@ -67,26 +67,37 @@ if [ "$(printf '%s' "$GATE_WAIT" | jq -r '.present')" = "true" ]; then
 else
     log "gatekeeper did not prompt (no quarantine attribute, or already cleared)"
 fi
+# Finder clears the quarantine flag when a person answers Open; `mv` from a
+# shell does not, so without this the app keeps running translocated.
+clear_quarantine MeetingHop
 
 step "launch"
 wait_for_status_item "$BUNDLE_ID" > /dev/null
 journal_at "$BUNDLE_ID" "$MEETINGHOP_JOURNAL_LEAF"
 
 step "calendar-permission"
+# The presence check stays a scenario-level guard, ahead of confirm_dialog:
+# a missing prompt is a failure of this scenario's premise, not a quiet path
+# through it (unlike the "allow" scenarios, where no prompt legitimately
+# means access was already granted). It read as a pass once: the app
+# shipped without the calendar entitlement, TCC refused to ask, the journal
+# said `granted: false`, and an assertion on that alone matched a denial
+# nobody had made.
 CALENDAR_WAIT="$(dialog wait calendar)"
-if [ "$(printf '%s' "$CALENDAR_WAIT" | jq -r '.present')" = "true" ]; then
-    shot "calendar-prompt" > /dev/null
-    dialog answer calendar deny > /dev/null
-    log "calendar permission prompted and was answered Don't Allow"
-else
-    # Nothing to deny. The assertion below is what actually proves the
-    # scenario's premise — if the app never records a denial, the timeout
-    # itself is the failure, never silently reinterpreted as a pass.
-    log "calendar permission did not prompt"
+if [ "$(printf '%s' "$CALENDAR_WAIT" | jq -r '.present')" != "true" ]; then
+    verdict fail "the calendar prompt never appeared, so there was nothing to refuse; the app was denied before the user was asked (see packaging/MeetingHop.entitlements)"
 fi
 
 step "access-denied"
-expect_event "calendar access" granted=false > /dev/null
+# confirm_dialog, not dialog+expect_event: a click succeeding is not the
+# same fact as the state it was meant to produce landing in the journal —
+# see confirm_dialog's own doc comment (harness/lib/scenario.sh) for the
+# diagnosis; the same race that could orphan an "allow" can orphan a
+# "deny". `status=denied` is the half that says a person refused. A build
+# that TCC never asks for records `notDetermined` here, which is the
+# defect the guard above already catches, and this assertion is what tells
+# the two apart regardless.
+confirm_dialog calendar deny "calendar access" granted=false status=denied > /dev/null
 
 step "denied-card"
 expect_event "guidance shown" state=access_denied > /dev/null

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	R13: under the hardened runtime, TCC refuses to even ASK for the calendar
+	unless the process holds this entitlement. The usage strings in
+	Info.plist are not enough on their own, and the refusal is silent:
+	requestFullAccessToEvents() returns false in about 25 ms without
+	throwing, the authorization status stays notDetermined, and no prompt is
+	ever shown. tccd says so in as many words (macOS 26.6.2, guest log,
+	2026-09-21):
+
+	    Prompting policy for hardened runtime; service: kTCCServiceCalendar
+	    requires entitlement com.apple.security.personal-information.calendars
+	    but it is missing for accessing={... dev.facens.meetinghop ...}
+	    Policy disallows prompt for Sub:{dev.facens.meetinghop}; access to
+	    kTCCServiceCalendar denied
+
+	With it, the same build prompts "Allow Full Access" and the grant sticks.
+	This app is not sandboxed; the entitlement is a hardened-runtime resource
+	grant, and it is the only one MeetingHop carries — it sends no Apple
+	Events.
+	-->
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
+</dict>
+</plist>

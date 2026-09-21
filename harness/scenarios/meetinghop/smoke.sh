@@ -70,6 +70,9 @@ if [ "$(printf '%s' "$GATE_WAIT" | jq -r '.present')" = "true" ]; then
 else
     log "gatekeeper did not prompt (no quarantine attribute, or already cleared)"
 fi
+# Finder clears the quarantine flag when a person answers Open; `mv` from a
+# shell does not, so without this the app keeps running translocated.
+clear_quarantine MeetingHop
 
 step "calendar-permission"
 # 20s, not the 120s step default. On v0.1.0 this wait always expires -- the
@@ -86,7 +89,13 @@ if [ "$(printf '%s' "$CALENDAR_WAIT" | jq -r '.present')" = "true" ]; then
     dialog answer calendar allow > /dev/null
     log "calendar permission prompted; answered allow (the dialog helper logs which button that pressed)"
 else
-    log "calendar permission did not prompt: v0.1.0 does not ask, it points at System Settings"
+    # Until 2026-09-21 this was the ordinary path: the app shipped without
+    # the calendar entitlement, so TCC refused to show the prompt at all.
+    # With that fixed, no prompt here is a finding about the build, which is
+    # what the `no-calendar-permission-prompt` code below records — this
+    # scenario keeps tolerating it rather than failing, because smoke's job
+    # is to report what a first run looks like, not to assert a grant.
+    log "calendar permission did not prompt — since the entitlement fix this is a defect, not the normal path"
 fi
 
 step "launch"

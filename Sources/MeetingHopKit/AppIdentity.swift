@@ -33,6 +33,13 @@ public enum AppIdentity {
         /// whenever access is granted, so a permission revoked later is a
         /// new refusal rather than one an old dismissal silently swallows.
         public static let accessDeniedNoticeSeen = "\(AppIdentity.bundleIdentifier).accessDeniedNoticeSeen"
+        /// Whether this copy is offered beta releases (KTD20, U13).
+        ///
+        /// Deliberately absent until the user answers: unset means "derive
+        /// it from the build", which is on for a beta and off otherwise.
+        /// Storing the derived answer would be the mirroring KTD8 forbids —
+        /// the copy would keep asking for betas after it updated to a final.
+        public static let betaUpdates = "\(AppIdentity.bundleIdentifier).betaUpdates"
 
         public static let all: [String] = [
             leadMinutes, endingLeadMinutes, hideWhileSharing, dismissedMeetingIDs,

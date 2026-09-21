@@ -17,7 +17,7 @@ import Foundation
 
 // MARK: - What the guidance is about
 
-/// One of the three things MeetingHop may have to explain about its calendar
+/// One of the four things MeetingHop may have to explain about its calendar
 /// connection. The raw values are the scalars a journal line carries under
 /// `data.state`, so a scenario asserts on the same word this enum is named by
 /// (`JournalEvent`'s own rule).
@@ -31,6 +31,13 @@ public enum GuidanceState: String, CaseIterable, Sendable {
     /// card of its own — see `Onboarding.decide` — only the popover's own
     /// empty state, which the user opened deliberately.
     case noCalendars = "no_calendars"
+    /// The running bundle is translocated (`BundleTranslocation`), so
+    /// `Coordinator.start()` never even asked for calendar access — there is
+    /// nothing to grant that would still be true by the next launch. This is
+    /// the one state whose fix is not a permission: it is moving the app,
+    /// which is also the only thing that makes it updatable later (a
+    /// read-only, per-launch-random mount is nothing Sparkle can replace).
+    case translocated = "translocated"
 
     /// The defaults key that remembers the user has answered this state, or
     /// `nil` for a state that is never persisted.
@@ -39,20 +46,33 @@ public enum GuidanceState: String, CaseIterable, Sendable {
     /// popover, which the user opens themselves. There is nothing to suppress
     /// — a surface that appears only when asked for cannot nag — and a key
     /// for it would be a promise this app never keeps.
+    ///
+    /// `translocated` has no key for a different reason: it is re-decided
+    /// fresh on every single launch, from the CURRENT bundle path
+    /// (`BundleTranslocation.isTranslocated`), never from a remembered fact —
+    /// so there is nothing a "seen" flag could mean here that is not already
+    /// true or false on its own. Suppressing it after one dismissal would
+    /// silence the one card that explains why the app still is not working,
+    /// on every later translocated launch, which is the nagging rule turned
+    /// against the thing it was written to protect.
     public var seenKey: String? {
         switch self {
         case .firstRun: return AppIdentity.DefaultsKeys.firstRunGuidanceSeen
         case .accessDenied: return AppIdentity.DefaultsKeys.accessDeniedNoticeSeen
         case .noCalendars: return nil
+        case .translocated: return nil
         }
     }
 
     /// Where this state's button goes first. The fallback is always
-    /// `.calendarApp` (see `GuidanceTarget`).
+    /// `.calendarApp` (see `GuidanceTarget`) — except for `.translocated`,
+    /// whose own target already is the fix rather than a place to look for
+    /// one.
     public var target: GuidanceTarget {
         switch self {
         case .firstRun, .noCalendars: return .accountsSettings
         case .accessDenied: return .privacySettings
+        case .translocated: return .applicationsFolder
         }
     }
 }
@@ -99,6 +119,11 @@ public enum GuidanceTarget: String, CaseIterable, Sendable {
     /// exactly what MeetingHop reads, which is worth something when a
     /// Settings URL does not open, and nothing when it does.
     case calendarApp = "calendar_app"
+    /// `/Applications`, revealed in Finder. Not a System Settings pane like
+    /// the two above: what a translocated launch needs fixed is the app's
+    /// own location, not a permission, so this is the only target here that
+    /// is a plain file URL rather than an `x-apple.systempreferences:` one.
+    case applicationsFolder = "applications_folder"
 
     /// The URL to hand `NSWorkspace.open`, or `nil` for `.calendarApp`, which
     /// is resolved from a bundle identifier instead and so has no literal URL
@@ -111,6 +136,8 @@ public enum GuidanceTarget: String, CaseIterable, Sendable {
             return URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Calendars")
         case .calendarApp:
             return nil
+        case .applicationsFolder:
+            return URL(fileURLWithPath: "/Applications")
         }
     }
 
@@ -173,12 +200,20 @@ public enum Onboarding {
 
     /// Whether to speak on this launch, and about what.
     ///
-    /// Two rules, in this order:
+    /// Three rules, in this order:
     ///
-    /// 1. A refused permission wins. It is the more specific problem, it is
-    ///    the one macOS will never raise again on its own, and telling
-    ///    someone what MeetingHop reads is beside the point while it is not
-    ///    allowed to read anything.
+    /// 0. Translocation wins over everything, including a refusal: it is
+    ///    checked before calendar access is even requested
+    ///    (`Coordinator.start()`), so `accessGranted` for a translocated
+    ///    launch is always `false` without ever having been *refused* —
+    ///    showing `.accessDenied` there would tell the user to turn back on
+    ///    a permission nobody actually turned off. Always `.show`, never
+    ///    `.suppress`: see `GuidanceState.translocated`'s own `seenKey` note
+    ///    for why there is nothing here to remember.
+    /// 1. Otherwise, a refused permission wins. It is the more specific
+    ///    problem, it is the one macOS will never raise again on its own,
+    ///    and telling someone what MeetingHop reads is beside the point
+    ///    while it is not allowed to read anything.
     /// 2. Otherwise the first-run card, once, for everyone — including the
     ///    user whose calendars are already there and for whom the app simply
     ///    works. That is the maintainer's call and this function implements
@@ -193,10 +228,14 @@ public enum Onboarding {
     /// was told not to do. It earns a surface the user opens deliberately —
     /// the popover's own empty state — and that is `emptyState` below.
     public static func decide(
+        translocated: Bool,
         accessGranted: Bool,
         firstRunSeen: Bool,
         accessDeniedSeen: Bool
     ) -> GuidanceDecision {
+        guard !translocated else {
+            return .show(.translocated)
+        }
         guard accessGranted else {
             return accessDeniedSeen
                 ? .suppress(.accessDenied, reason: .alreadySeen)
@@ -283,6 +322,8 @@ public enum GuidanceCopy {
             return "MeetingHop reads Calendar.app"
         case .accessDenied:
             return "Calendar access is off"
+        case .translocated:
+            return "Move MeetingHop to Applications"
         }
     }
 
@@ -305,6 +346,11 @@ public enum GuidanceCopy {
             MeetingHop was refused permission to read your calendar, and macOS does not ask a second time. \
             Turn it back on in System Settings, under Privacy & Security, then Calendars.
             """
+        case .translocated:
+            return """
+            MeetingHop is running from a temporary location macOS made for it, not from Applications. \
+            Move it there and open it again to use Calendar access and get updates.
+            """
         }
     }
 
@@ -318,6 +364,8 @@ public enum GuidanceCopy {
             return "Add an account"
         case .accessDenied:
             return "Open Privacy Settings"
+        case .translocated:
+            return "Open Applications Folder"
         }
     }
 

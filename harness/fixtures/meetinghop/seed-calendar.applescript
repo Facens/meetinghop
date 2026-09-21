@@ -68,27 +68,34 @@
    probe` by hand to see what Calendar.app actually has, then correct
    whatever property above does not match its real dictionary.
 
-   One further thing this file cannot verify even in principle, from inside
-   the guest: whether the `uid` it reads back off a freshly created event is
-   the same string EventKit later reports as that event's own
+   RESOLVED 2026-09-21 (was "one further thing this file cannot verify even
+   in principle"): the `uid` this file reads back off a freshly created
+   event is NOT the same string EventKit later reports as that event's own
    `eventIdentifier` — the value `Sources/MeetingHop/Calendar/CalendarSource.swift`'s
    `fetch` turns into `UpcomingMeeting.id`, and so the value
    `AccessibilityID.hash` turns into the Join button's AXIdentifier
    (`hud.join.<idHash>`) and the `join fired` journal event's
    `meeting_id_hash` (Sources/MeetingHopKit/Harness/JournalEvent.swift).
-   Calendar.app's scripting dictionary has historically distinguished a
-   `uid` — closer to EventKit's own `calendarItemExternalIdentifier`, meant
-   to survive a resync — from EventKit's local `eventIdentifier`; the two
-   are not documented anywhere to be the same string. `uid` is reported
-   here because it is the only per-event identifier Calendar.app's
-   scripting vocabulary exposes at all.
-   harness/fixtures/meetinghop/calendar/apply.sh persists it for
-   harness/scenarios/meetinghop/meeting-in-three.sh to hash with
-   harness/lib/fixtures.sh's own `fixtures_path_hash` — the same algorithm
-   `AccessibilityID.hash` uses — and that scenario says so again, at the
-   point it uses the result: if the Join click or the `join fired`
-   assertion misses on the first real run, this equivalence, not the
-   hashing, is the first thing to check. *)
+   Measured directly, same event, same moment, on a clone of
+   first-run-golden: Calendar's own `uid` was a single UUID
+   ("1A3099EE-CE79-4D38-ABF5-F420B75DEBD4"-shaped), EventKit's
+   `eventIdentifier` a colon-joined pair of two different UUIDs
+   ("0CF804E9-...:37A7FED8-..."-shaped) — confirming what Calendar.app's
+   scripting dictionary already implied by distinguishing a `uid` (closer to
+   EventKit's own `calendarItemExternalIdentifier`, meant to survive a
+   resync) from EventKit's local `eventIdentifier`, and what nothing had
+   ever documented as the same string either way. `uid` is still reported
+   here, unchanged, because it is the only per-event identifier
+   Calendar.app's scripting vocabulary exposes at all, and this file's own
+   `event` verb contract (this file's own header, above) still promises it
+   — but nothing downstream predicts a click target from it any more.
+   `harness/scenarios/meetinghop/meeting-in-three.sh` used to hash this
+   `uid` with `harness/lib/fixtures.sh`'s own `fixtures_path_hash` and
+   click that, which predicted the wrong AXIdentifier on every run; it now
+   reads the app's own `id_hash` off the `card shown` journal line instead
+   — the hash `AccessibilityID.hash` actually computed, not a guess at what
+   its input might have been. See that scenario's own comment and
+   `JournalData.cardShown`'s. *)
 
 on run argv
     if (count of argv) < 1 then
@@ -113,7 +120,9 @@ on run argv
         end if
         set calName to item 2 of argv
         set theTitle to item 3 of argv
-        set startEpoch to (item 4 of argv) as integer
+        -- Kept as TEXT, not coerced to integer here — see verbEvent's own
+        -- comment for why.
+        set startEpoch to item 4 of argv
         set durationMinutes to (item 5 of argv) as integer
         set theLocation to item 6 of argv
         return my verbEvent(calName, theTitle, startEpoch, durationMinutes, theLocation)
@@ -133,6 +142,19 @@ on verbCalendar(calName)
     return "{\"calendar\":" & my jsonString(calName) & "}"
 end verbCalendar
 
+-- `startEpoch` arrives as TEXT (see the "event" branch of `run` above) and
+-- must stay that way everywhere it reaches a `do shell script` command
+-- line. AppleScript's own number-to-text coercion — what `&` does to a
+-- number automatically — renders anything from roughly a billion upward in
+-- scientific notation ("1758452000" as integer, concatenated, becomes
+-- "1.758452E+9"), and a Unix epoch is always past that threshold. BSD
+-- `date -r` cannot parse that and fails with its usage message, which is
+-- exactly what broke `meeting-in-three.sh` (confirmed 2026-09-21 against
+-- this macOS's own /bin/date: "date -u -r 1.758452E+9 ..." → "usage: date
+-- ..."; nothing-upcoming.sh never hit it because it never seeds an event).
+-- `startEpoch as integer`, below, is fine — it only ever feeds arithmetic,
+-- never a shell command string, so which AppleScript class the coercion
+-- lands on (integer or, past that same threshold, real) does not matter.
 on verbEvent(calName, theTitle, startEpoch, durationMinutes, theLocation)
     tell application "Calendar"
         if not (exists calendar calName) then
@@ -141,7 +163,7 @@ on verbEvent(calName, theTitle, startEpoch, durationMinutes, theLocation)
         -- Epoch arithmetic rather than parsing a formatted date string —
         -- see this file's own header for why.
         set nowEpoch to (do shell script "date +%s") as integer
-        set theStartDate to (current date) + (startEpoch - nowEpoch)
+        set theStartDate to (current date) + ((startEpoch as integer) - nowEpoch)
         set theEndDate to theStartDate + (durationMinutes * 60)
         set newEvent to make new event at end of events of calendar calName with properties {summary:theTitle, start date:theStartDate, end date:theEndDate, location:theLocation}
         set theUID to uid of newEvent
@@ -149,6 +171,8 @@ on verbEvent(calName, theTitle, startEpoch, durationMinutes, theLocation)
     if theUID is missing value or (theUID as text) is "" then
         error "seed-calendar.applescript: the new event reported no uid."
     end if
+    -- startEpoch, still text, goes straight into the command line here —
+    -- see this handler's own header comment for why that matters.
     set startISO to do shell script "date -u -r " & startEpoch & " +%Y-%m-%dT%H:%M:%SZ"
     return "{\"calendar\":" & my jsonString(calName) & ",\"title\":" & my jsonString(theTitle) & ",\"start\":" & my jsonString(startISO) & ",\"uid\":" & my jsonString(theUID as text) & "}"
 end verbEvent

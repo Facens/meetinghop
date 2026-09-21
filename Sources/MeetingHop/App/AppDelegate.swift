@@ -20,6 +20,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// launching is silently never installed.
     private var menuBar: MenuBarController!
     private let coordinator = Coordinator()
+    /// Sparkle (U13). A stored property, never a local: a
+    /// `SPUStandardUpdaterController` that goes out of scope is deallocated
+    /// and stops checking with no error anywhere.
+    private var updater: UpdaterController!
+
+    /// So the settings window can reach the updater without threading it
+    /// through the menu-bar closure that opens it. Weak and set once at
+    /// launch; the delegate outlives every window anyway, and a strong
+    /// static would keep a terminated app's delegate alive in tests.
+    private(set) static weak var shared: AppDelegate?
+
+    /// The updater, for the settings window's Updates section. Nil before
+    /// `applicationDidFinishLaunching` has run.
+    var updaterController: UpdaterController? { updater }
     /// A sample card belongs to the user, not to the schedule: the coordinator
     /// would tear it down on its next tick, five seconds later.
     private var showingSample = false
@@ -28,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sampleMeetings: [UpcomingMeeting] = []
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        AppDelegate.shared = self
         SettingsStore.registerDefaults()
         menuBar = MenuBarController()
         menuBar.onJoin = { [weak self] meeting in self?.coordinator.join(meeting) }
@@ -37,6 +52,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onCalendarHelp = { [weak self] state in
             self?.coordinator.calendarHelpRequested(state)
         }
+        menuBar.onCheckForUpdates = { [weak self] in self?.updater.checkForUpdates() }
+
+        // Started here rather than on the first visit to Settings, which
+        // most people never make (R12). It refuses on an alpha build or one
+        // with no signing key, says why on stderr, and the footer control
+        // then stays hidden because `canCheck` is false.
+        updater = UpdaterController(
+            betaEnabled: {
+                UpdatePolicy.betaEnabled(
+                    preference: SettingsStore.shared.betaUpdates,
+                    version: AppVersion.display()
+                )
+            },
+            updatePending: { [weak self] pending in
+                guard let self else { return }
+                self.menuBar.setUpdateState(canCheck: self.updater.refusal == nil, pending: pending)
+            }
+        )
+        menuBar.setUpdateState(canCheck: updater.refusal == nil, pending: false)
 
         coordinator.present = { [weak self] card in self?.show(HUDModel(card: card)) }
         coordinator.conceal = { [weak self] in
@@ -61,6 +95,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         Task { await coordinator.start() }
+    }
+
+    /// The About panel, from the status item's menu.
+    ///
+    /// AppKit's standard panel rather than a window of our own: it reads the
+    /// bundle's name, icon and version itself, so the only thing worth adding
+    /// is the licence and where the source is. `activate` first — an accessory
+    /// app has no Dock icon to bring it forward, and the panel would open
+    /// behind whatever the user was looking at.
+    func showAbout() {
+        NSApp.activate(ignoringOtherApps: true)
+        let credits = NSMutableAttributedString(
+            string: "MIT licensed.\nhttps://github.com/Facens/meetinghop",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        )
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
     }
 
     // MARK: - Test surface (U8; KTD3, KTD4, R13, R16)

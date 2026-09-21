@@ -16,13 +16,25 @@
 # fixture runs and lasting <duration-minutes>, with <location> carrying
 # whatever MeetingHopKit.MeetingLinkParser should find there (a Zoom URL,
 # for `meeting-in-three.sh`) — this fixture never assumes what kind of link
-# it is; that choice belongs to the scenario that names the location. The
-# real Calendar-scripting identifier the new event gets back — which
-# `harness/scenarios/meetinghop/meeting-in-three.sh` cannot predict from the
-# host — is persisted via `fx_write_state` for that scenario to read back
-# with `fixtures_guest_capture` and hash with `fixtures_path_hash`
-# (harness/lib/fixtures.sh). See seed-calendar.applescript's own header for
-# exactly what is and is not verified about that identifier.
+# it is; that choice belongs to the scenario that names the location.
+#
+# The new event's `uid`, Calendar's own scripting identifier, is checked for
+# being non-empty (a real integrity check: it is what proves
+# seed-calendar.applescript actually created something) and then discarded.
+# It is NOT what `meeting-in-three.sh` clicks by. Measured directly against
+# a seeded event on 2026-09-21: this `uid` and EventKit's own
+# `eventIdentifier` — what `Sources/MeetingHopKit/Support/AccessibilityID.swift`
+# actually hashes for the Join button's `AXIdentifier` — are two different
+# strings in two different formats, never documented as equal, and never
+# actually equal. Before that unit, this fixture persisted `uid` via
+# `fx_write_state` for the scenario to read back and hash, which predicted
+# the wrong click target on every single run; the scenario now reads the
+# app's own `id_hash` off the `card shown` journal line instead (see
+# `JournalData.cardShown`'s doc comment and meeting-in-three.sh's own).
+# `fx_write_state`/`fx_state_read_command`
+# (harness/fixtures/meetinghop/_lib.sh) are unused by this fixture now but
+# left in place: generic guest-state plumbing a later fixture may still
+# want, not specific to this one's old, wrong use of it.
 #
 # Fails loudly rather than seeding nothing silently (this unit's own
 # instruction): osacompile output aside, seed-calendar.applescript itself
@@ -79,5 +91,3 @@ if [ -z "$EVENT_UID" ]; then
     echo "error: calendar fixture: seed-calendar.applescript reported no uid for the seeded event — got: $EVENT_JSON" >&2
     exit 3
 fi
-
-fx_write_state "event-uid" "$EVENT_UID"

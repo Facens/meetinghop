@@ -4,12 +4,21 @@
 # confines to the stranger tier (harness/README.md, "Only the stranger tier
 # drives the screen").
 #
-# R10/AE: a stranger installs MeetingHop on a machine that has exactly one
-# local calendar and nothing in it, answers Allow, and the app finds a
-# calendar but no meeting. Stated end state (R11's vocabulary):
-# `calendar access` is `granted: true`, `calendars counted` is 1 — the
-# calendar `fixture meetinghop/calendar` seeds — and `upcoming counted` is
-# 0, because that calendar holds no event at all.
+# R10/AE: a stranger installs MeetingHop on a machine that has one extra
+# local calendar on top of macOS's own built-ins, and nothing in it, answers
+# Allow, and the app finds calendars but no meeting. Stated end state (R11's
+# vocabulary): `calendar access` is `granted: true`, `calendars counted` is
+# 4, and `upcoming counted` is 0, because none of those calendars holds an
+# event.
+#
+# `4`, not `1`: `store.calendars(for: .event)` always carries three built-in
+# local calendars on this image — "Calendar", "US Holidays", "Birthdays" —
+# whether or not any account or fixture ever touches Calendar.app (see
+# `no-accounts.sh`'s own header, which is where that fact is verified, with
+# how). `fixture meetinghop/calendar` adds exactly one more, "MeetingHop
+# Harness", on top of those three: 3 + 1 = 4. `count=1` (this scenario's own
+# assertion before 2026-09-21) assumed the golden image started at zero,
+# which was never true and was never checked until now.
 #
 # This is also the scenario that proves the onboarding card is genuinely
 # unconditional. Nothing is wrong on this guest: access was granted, a
@@ -21,17 +30,17 @@
 # further, no second card, no reappearance on the next tick.
 #
 # This is the scenario `no-accounts.sh`'s own edge case exists to be
-# distinguishable from: `calendars counted: 1` here is a different fact
-# from `calendars counted: 0` there, so a guest that unexpectedly has (or
-# is missing) a calendar fails the matching scenario loudly rather than
-# passing as the other.
+# distinguishable from: `calendars counted: 4` here is a different fact from
+# `calendars counted: 3` there, so a guest that unexpectedly has (or is
+# missing) the fixture's own calendar fails the matching scenario loudly
+# rather than passing as the other.
 #
 # The two scenarios are coupled the other way too: this one's own
-# `calendars counted: 1` only means "the golden image starts at zero and
-# this fixture added exactly one" if that starting-at-zero fact is itself
-# true — which is what `no-accounts.sh` actually proves. If this scenario
-# ever reports more than one calendar, check whether `no-accounts.sh` still
-# passes before assuming this fixture is at fault.
+# `calendars counted: 4` only means "the built-in three plus this fixture's
+# one" if the built-in count is itself three — which is what `no-accounts.sh`
+# actually proves. If this scenario ever reports a count other than 4, check
+# whether `no-accounts.sh` still reports 3 before assuming this fixture is
+# at fault.
 set -euo pipefail
 
 HARNESS_DIR="${HARNESS_DIR:?nothing-upcoming.sh must be run by harness/run.sh, which exports HARNESS_DIR.}"
@@ -60,26 +69,25 @@ if [ "$(printf '%s' "$GATE_WAIT" | jq -r '.present')" = "true" ]; then
 else
     log "gatekeeper did not prompt (no quarantine attribute, or already cleared)"
 fi
+# Finder clears the quarantine flag when a person answers Open; `mv` from a
+# shell does not, so without this the app keeps running translocated.
+clear_quarantine MeetingHop
 
 step "launch"
 wait_for_status_item "$BUNDLE_ID" > /dev/null
 journal_at "$BUNDLE_ID" "$MEETINGHOP_JOURNAL_LEAF"
 
 step "calendar-permission"
-CALENDAR_WAIT="$(dialog wait calendar)"
-if [ "$(printf '%s' "$CALENDAR_WAIT" | jq -r '.present')" = "true" ]; then
-    shot "calendar-prompt" > /dev/null
-    dialog answer calendar allow > /dev/null
-    log "calendar permission prompted; answered allow (the dialog helper logs which button that pressed)"
-else
-    log "calendar permission did not prompt"
-fi
-# Asserted before the counts below, not folded into either: if the grant
-# itself silently failed, Coordinator.start() takes its early-return branch
-# and never calls calendar.start() at all, so neither `calendars counted`
-# nor `upcoming counted` would ever appear — a bare count timeout would then
-# misleadingly blame the count instead of the grant that never happened.
-expect_event "calendar access" granted=true > /dev/null
+# confirm_dialog, not dialog+expect_event: a click succeeding is not the
+# same fact as the grant it was meant to produce landing in the journal —
+# see confirm_dialog's own doc comment (harness/lib/scenario.sh) for the
+# diagnosis. Also covers the early-return risk the old comment here named:
+# if the grant itself silently failed, Coordinator.start() never calls
+# calendar.start() at all, so neither `calendars counted` nor `upcoming
+# counted` would ever appear either — a bare count timeout further down
+# would then misleadingly blame the count instead of the grant that never
+# happened.
+confirm_dialog calendar allow "calendar access" granted=true > /dev/null
 
 step "first-run-card"
 expect_event "guidance shown" state=first_run > /dev/null
@@ -90,7 +98,9 @@ click "$BUNDLE_ID" "guidance.dismiss"
 expect_event "guidance dismissed" state=first_run > /dev/null
 
 step "calendars-counted"
-expect_event "calendars counted" count=1 > /dev/null
+# count=4: the golden image's own three built-in calendars plus this
+# fixture's one — see this file's own header for why.
+expect_event "calendars counted" count=4 > /dev/null
 
 step "upcoming-counted"
 expect_event "upcoming counted" count=0 > /dev/null

@@ -442,8 +442,14 @@ private func hfix_testCalendarFixtureWithoutEvent(_ t: TestRunner, harnessDir: U
 }
 
 // MARK: - meetinghop/calendar --event: journal on, calendar seeded, event
-// seeded, and the stub's uid persisted to the state file
-// meeting-in-three.sh reads back with fixtures_guest_capture.
+// seeded, and — since 2026-09-21 — nothing persisted to the state file.
+// The uid used to be written there for meeting-in-three.sh to read back
+// and hash into a predicted click target; that predicted the wrong
+// AXIdentifier on every run, because Calendar's own `uid` is not
+// EventKit's `eventIdentifier` (seed-calendar.applescript's own header,
+// "RESOLVED 2026-09-21"). The scenario now reads the app's own `id_hash`
+// off the `card shown` journal line instead, so this fixture has nothing
+// left to persist.
 
 private func hfix_testCalendarFixtureWithEvent(_ t: TestRunner, harnessDir: URL) {
     guard let rig = hfix_makeRig("hf-calendar-event", harnessDir: harnessDir, t: t, stubEventUID: "stub-event-uid-abc123") else { return }
@@ -458,11 +464,7 @@ private func hfix_testCalendarFixtureWithEvent(_ t: TestRunner, harnessDir: URL)
     t.expect(osascriptLog.contains("zoom.us/j/5551234567"), "the Zoom location reaches seed-calendar.applescript unchanged — got: \(osascriptLog)")
 
     let stateFile = rig.home + "/.meetinghop-harness-state/event-uid"
-    guard let uid = try? String(contentsOfFile: stateFile, encoding: .utf8) else {
-        t.expect(false, "the fixture persisted the seeded event's uid at \(stateFile), for a scenario to read back with fixtures_guest_capture")
-        return
-    }
-    t.expectEqual(uid, "stub-event-uid-abc123", "the persisted uid is exactly what seed-calendar.applescript reported back, unmodified")
+    t.expect(!FileManager.default.fileExists(atPath: stateFile), "the seeded event's uid is checked for being non-empty (an integrity check) and then discarded — nothing reads it back any more, so nothing is persisted")
 }
 
 // MARK: - meetinghop/calendar --event fails loudly (never silently) when

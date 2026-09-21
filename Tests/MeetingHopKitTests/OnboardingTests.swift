@@ -27,12 +27,12 @@ func runOnboardingTests(_ t: TestRunner) {
     // thing as everybody else.
 
     t.expectEqual(
-        Onboarding.decide(accessGranted: true, firstRunSeen: false, accessDeniedSeen: false),
+        Onboarding.decide(translocated: false, accessGranted: true, firstRunSeen: false, accessDeniedSeen: false),
         .show(.firstRun),
         "a granted first launch shows the first-run card"
     )
     t.expectEqual(
-        Onboarding.decide(accessGranted: true, firstRunSeen: true, accessDeniedSeen: false),
+        Onboarding.decide(translocated: false, accessGranted: true, firstRunSeen: true, accessDeniedSeen: false),
         .suppress(.firstRun, reason: .alreadySeen),
         "a second launch shows nothing, and says in the journal which card stayed away"
     )
@@ -41,25 +41,49 @@ func runOnboardingTests(_ t: TestRunner) {
     // separately-remembered state: dismissing one never answers the other.
 
     t.expectEqual(
-        Onboarding.decide(accessGranted: false, firstRunSeen: false, accessDeniedSeen: false),
+        Onboarding.decide(translocated: false, accessGranted: false, firstRunSeen: false, accessDeniedSeen: false),
         .show(.accessDenied),
         "a refused permission is what a first launch says, not the general introduction"
     )
     t.expectEqual(
-        Onboarding.decide(accessGranted: false, firstRunSeen: true, accessDeniedSeen: false),
+        Onboarding.decide(translocated: false, accessGranted: false, firstRunSeen: true, accessDeniedSeen: false),
         .show(.accessDenied),
         "a refusal still speaks after the first-run card has been dismissed — two states, one surface"
     )
     t.expectEqual(
-        Onboarding.decide(accessGranted: false, firstRunSeen: false, accessDeniedSeen: true),
+        Onboarding.decide(translocated: false, accessGranted: false, firstRunSeen: false, accessDeniedSeen: true),
         .suppress(.accessDenied, reason: .alreadySeen),
         "a refusal answered once does not nag on every launch"
     )
     t.expectEqual(
-        Onboarding.decide(accessGranted: true, firstRunSeen: false, accessDeniedSeen: true),
+        Onboarding.decide(translocated: false, accessGranted: true, firstRunSeen: false, accessDeniedSeen: true),
         .show(.firstRun),
         "granting access after a refusal reaches the introduction the user never got"
     )
+
+    // MARK: - 2b. Translocation outranks everything, including a refusal —
+    // it is decided, and the calendar request skipped, before access is ever
+    // asked for (`Coordinator.start()`), so there is no refusal to compare it
+    // against in the first place. Never suppressed: see
+    // `GuidanceState.translocated`'s own `seenKey` doc comment for why.
+
+    for accessGranted in [true, false] {
+        for firstRunSeen in [true, false] {
+            for accessDeniedSeen in [true, false] {
+                t.expectEqual(
+                    Onboarding.decide(
+                        translocated: true,
+                        accessGranted: accessGranted,
+                        firstRunSeen: firstRunSeen,
+                        accessDeniedSeen: accessDeniedSeen
+                    ),
+                    .show(.translocated),
+                    "translocated always shows .translocated, whatever else is true "
+                        + "(accessGranted: \(accessGranted), firstRunSeen: \(firstRunSeen), accessDeniedSeen: \(accessDeniedSeen))"
+                )
+            }
+        }
+    }
 
     // MARK: - 3. `noCalendars` is never an unprompted card.
     //
@@ -69,21 +93,24 @@ func runOnboardingTests(_ t: TestRunner) {
     // panel to say it again is the nagging this feature was told not to do.
     // It gets the popover instead, which the user opens deliberately.
 
-    for granted in [true, false] {
-        for firstRunSeen in [true, false] {
-            for deniedSeen in [true, false] {
-                let decision = Onboarding.decide(
-                    accessGranted: granted, firstRunSeen: firstRunSeen, accessDeniedSeen: deniedSeen
-                )
-                let state: GuidanceState
-                switch decision {
-                case .show(let shown): state = shown
-                case .suppress(let suppressed, _): state = suppressed
+    for translocated in [true, false] {
+        for granted in [true, false] {
+            for firstRunSeen in [true, false] {
+                for deniedSeen in [true, false] {
+                    let decision = Onboarding.decide(
+                        translocated: translocated,
+                        accessGranted: granted, firstRunSeen: firstRunSeen, accessDeniedSeen: deniedSeen
+                    )
+                    let state: GuidanceState
+                    switch decision {
+                    case .show(let shown): state = shown
+                    case .suppress(let suppressed, _): state = suppressed
+                    }
+                    t.expect(
+                        state != .noCalendars,
+                        "the card decision never reaches the zero-calendars state (translocated: \(translocated), granted: \(granted), firstRunSeen: \(firstRunSeen), deniedSeen: \(deniedSeen))"
+                    )
                 }
-                t.expect(
-                    state != .noCalendars,
-                    "the card decision never reaches the zero-calendars state (granted: \(granted), firstRunSeen: \(firstRunSeen), deniedSeen: \(deniedSeen))"
-                )
             }
         }
     }
@@ -144,6 +171,10 @@ func runOnboardingTests(_ t: TestRunner) {
     )
     t.expectEqual(GuidanceState.noCalendars.target, .accountsSettings, "the popover's empty-Calendar state goes to the same page")
     t.expectEqual(GuidanceState.accessDenied.target, .privacySettings, "a refused permission goes to the privacy pane")
+    t.expectEqual(
+        GuidanceState.translocated.target, .applicationsFolder,
+        "a translocated launch goes to /Applications — the fix itself, not a place to look for one"
+    )
 
     t.expectEqual(
         GuidanceTarget.accountsSettings.url?.absoluteString,
@@ -163,12 +194,23 @@ func runOnboardingTests(_ t: TestRunner) {
         GuidanceTarget.calendarBundleIdentifier, "com.apple.iCal",
         "Calendar.app's bundle identifier, which is what /System/Applications/Calendar.app's Info.plist actually declares"
     )
-    for target in GuidanceTarget.allCases where target != .calendarApp {
+    t.expectEqual(
+        GuidanceTarget.applicationsFolder.url, URL(fileURLWithPath: "/Applications"),
+        "the Applications target is a plain file URL, not a System Settings pane — there is no permission to open a pane for"
+    )
+    // Only the two Settings panes use that scheme: `.calendarApp` has no URL
+    // at all, and `.applicationsFolder` is a `file://` URL on purpose (see
+    // its own doc comment).
+    for target in GuidanceTarget.allCases where target != .calendarApp && target != .applicationsFolder {
         t.expectEqual(
             target.url?.scheme, "x-apple.systempreferences",
             "\(target.rawValue) uses the scheme both panes opt into (allowsXAppleSystemPreferencesURLScheme)"
         )
     }
+    t.expectEqual(
+        GuidanceTarget.applicationsFolder.url?.scheme, "file",
+        "the Applications target is addressed as a local file, never as a Settings scheme"
+    )
 
     // MARK: - 7. Every scalar a scenario asserts on is a distinct, non-empty,
     // lower-snake word. The journal matcher compares scalars under `data` and
@@ -253,6 +295,14 @@ func runOnboardingTests(_ t: TestRunner) {
         "the popover's denied state carries the same path, since it is where the user lands after the card is gone"
     )
 
+    // The translocated card names the fix in words, the same way the other
+    // two name theirs, and never claims the problem is a permission — it is
+    // not "System Settings" here, and "Calendar" appears only as the reason
+    // moving the app matters, never as something to configure.
+    let translocatedBody = GuidanceCopy.body(.translocated)
+    t.expect(translocatedBody.contains("Applications"), "the translocated card names the Applications folder")
+    t.expect(!translocatedBody.contains("System Settings"), "…and never sends the user to Settings — there is no permission to fix")
+
     // A button label names where it goes. The body says Calendar.app and the
     // button opens System Settings, which is only honest if the label says so.
     t.expect(
@@ -266,6 +316,10 @@ func runOnboardingTests(_ t: TestRunner) {
     t.expect(
         GuidanceCopy.action(.accessDenied).lowercased().contains("settings"),
         "the denied button says it opens Settings — got '\(GuidanceCopy.action(.accessDenied))'"
+    )
+    t.expect(
+        GuidanceCopy.action(.translocated).lowercased().contains("application"),
+        "the translocated button names the Applications folder it opens — got '\(GuidanceCopy.action(.translocated))'"
     )
     t.expect(
         !GuidanceCopy.dismiss.lowercased().contains("later") && !GuidanceCopy.dismiss.lowercased().contains("not now"),

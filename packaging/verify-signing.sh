@@ -9,13 +9,19 @@
 # Contents/Resources, and it reported AgentMenu's defectively signed bundle as
 # valid. So every Mach-O in the bundle is found by its magic number rather than
 # by where codesign expects code to be, and each one is inspected on its own.
-# Today that is one executable; once Sparkle is embedded it is every binary
-# inside the framework as well.
+# Today that is the app executable plus the five Mach-Os inside
+# Sparkle.framework (the framework itself, Autoupdate, Updater.app and the
+# two XPC services), each inspected on its own.
 #
 # consistency: every Mach-O was signed by this pipeline (none is linker-signed),
 #   all of them carry the same team identifier (all ad-hoc, or all one team),
-#   every one requested the hardened runtime, and nothing carries entitlements —
-#   MeetingHop sends no Apple Events and ships no entitlements file (R24).
+#   every one requested the hardened runtime, the app carries the calendar
+#   entitlement and nothing else in the bundle carries entitlements (R24).
+#   The app's entitlement is asserted, not merely permitted: without
+#   com.apple.security.personal-information.calendars the hardened runtime
+#   stops TCC from ever showing the calendar prompt, and the app ships with an
+#   empty menu and no way to fix it — the v0.1.0 defect this check exists to
+#   keep from recurring.
 # authority: consistency, plus every Mach-O reports Developer ID authority, the
 #   expected team, a secure timestamp, and no ad-hoc flag (R6).
 set -euo pipefail
@@ -23,6 +29,7 @@ set -euo pipefail
 MODE="${1:-}"
 APP="${2:-}"
 TEAM_ID="${MH_TEAM_ID:-KSP2AAA5L2}"
+CALENDAR_ENTITLEMENT="com.apple.security.personal-information.calendars"
 
 if [ "$MODE" != "consistency" ] && [ "$MODE" != "authority" ] || [ ! -d "$APP" ]; then
     echo "usage: $0 consistency|authority <path/to/MeetingHop.app>" >&2
@@ -75,9 +82,16 @@ for path in "${machos[@]}"; do
     esac
 
     entitlements="$(codesign -d --entitlements - --xml "$path" 2>/dev/null || true)"
-    case "$entitlements" in
-        *"<key>"*) fail "$rel: carries entitlements; MeetingHop ships none" ;;
-    esac
+    if [ "$path" = "$MAIN_EXECUTABLE" ]; then
+        case "$entitlements" in
+            *"$CALENDAR_ENTITLEMENT"*) ;;
+            *) fail "$rel: lacks the $CALENDAR_ENTITLEMENT entitlement; the calendar prompt never appears without it" ;;
+        esac
+    else
+        case "$entitlements" in
+            *"<key>"*) fail "$rel: carries entitlements; only the app itself may" ;;
+        esac
+    fi
 
     if [ "$MODE" = "authority" ]; then
         [ "$authority" -gt 0 ] || fail "$rel: no Developer ID Application authority"

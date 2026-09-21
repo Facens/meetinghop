@@ -111,6 +111,9 @@ if [ "$(printf '%s' "$GATE_WAIT" | jq -r '.present')" = "true" ]; then
 else
     log "gatekeeper did not prompt (no quarantine attribute, or already cleared)"
 fi
+# Finder clears the quarantine flag when a person answers Open; `mv` from a
+# shell does not, so without this the app keeps running translocated.
+clear_quarantine MeetingHop
 
 step "launch"
 wait_for_status_item "$BUNDLE_ID" > /dev/null
@@ -118,15 +121,12 @@ journal_at "$BUNDLE_ID" "$MEETINGHOP_JOURNAL_LEAF"
 expect_event "harness started" boot=1 > /dev/null
 
 step "calendar-permission"
-CALENDAR_WAIT="$(dialog wait calendar)"
-if [ "$(printf '%s' "$CALENDAR_WAIT" | jq -r '.present')" = "true" ]; then
-    shot "calendar-prompt" > /dev/null
-    dialog answer calendar allow > /dev/null
-    log "calendar permission prompted; answered allow (the dialog helper logs which button that pressed)"
-else
-    log "calendar permission did not prompt"
-fi
-expect_event "calendar access" granted=true > /dev/null
+# `confirm_dialog`, not a click followed by a hopeful assertion: answering
+# the prompt is the action, and the app's own `calendar access` line is the
+# only evidence it landed. Three runs hung here with the click reported
+# successful and nothing ever recorded — see the 2026-09-21 addendum in the
+# harness research notes.
+confirm_dialog calendar allow "calendar access" granted=true > /dev/null
 
 # Answered before the Settings window is opened: the onboarding card sits at
 # the top centre of the screen and would otherwise be in every screenshot

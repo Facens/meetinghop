@@ -107,13 +107,41 @@ final class Coordinator {
     // MARK: - Lifecycle
 
     func start() async {
+        // Checked before anything else, and before calendar access is ever
+        // requested: a translocated launch (`BundleTranslocation`) sits on a
+        // read-only mount that will not exist by the next launch, so asking
+        // EventKit for access from here would grant it to a path with no
+        // future. Skipping the request also removes the one thing that made
+        // the harness's install-then-relaunch race dangerous — an in-flight
+        // TCC prompt with nobody able to answer it before this process is
+        // killed and relaunched from `/Applications` (see
+        // `harness/lib/scenario.sh`'s `clear_quarantine`, and
+        // `BundleTranslocation`'s own doc comment for the VM test that
+        // disproved the harness-side fix this replaces).
+        if BundleTranslocation.isTranslocated(bundlePath: Bundle.main.bundlePath) {
+            journal?.append(.calendarAccess, JournalData.calendarAccess(
+                granted: false,
+                skippedReason: "translocated"
+            ))
+            decideGuidance(translocated: true, accessGranted: false)
+            report?("MeetingHop is running from a temporary location. Move it to Applications, then open it again.")
+            menuBar?(MenuBarModel(meetings: [], currentTitle: nil, calendarAuthorized: false, calendarCount: 0))
+            return
+        }
+
+        let statusBefore = CalendarSource.authorizationStatusName
         let granted = await calendar.requestAccess()
-        journal?.append(.calendarAccess, JournalData.calendarAccess(granted: granted))
+        journal?.append(.calendarAccess, JournalData.calendarAccess(
+            granted: granted,
+            status: CalendarSource.authorizationStatusName,
+            failure: calendar.lastAccessFailure,
+            statusBefore: statusBefore
+        ))
         // Before the early return below, not after it: the refused-permission
         // card is the one state this feature exists for most, and a denial
         // branch that returns first would be the one launch that never
         // reaches the guidance at all.
-        decideGuidance(accessGranted: granted)
+        decideGuidance(translocated: false, accessGranted: granted)
 
         guard granted else {
             report?("MeetingHop cannot see your meetings until you allow calendar access.")
@@ -150,7 +178,7 @@ final class Coordinator {
     /// The rule itself is in the Kit, where the test suite can reach it; what
     /// is left here is reading two booleans, writing a journal line and
     /// calling a closure — the parts that need a running app anyway.
-    private func decideGuidance(accessGranted: Bool) {
+    private func decideGuidance(translocated: Bool, accessGranted: Bool) {
         if accessGranted {
             // A grant makes an old dismissal stale: the user who turns access
             // back on and revokes it again months later is being refused
@@ -162,6 +190,7 @@ final class Coordinator {
         }
 
         switch Onboarding.decide(
+            translocated: translocated,
             accessGranted: accessGranted,
             firstRunSeen: OnboardingStorage.seen(.firstRun, in: defaults),
             accessDeniedSeen: OnboardingStorage.seen(.accessDenied, in: defaults)
@@ -314,6 +343,7 @@ final class Coordinator {
             let signature = card.meetings.map(\.id)
             if signature != lastCardSignature, let leader = card.items.first {
                 journal?.append(.cardShown, JournalData.cardShown(
+                    id: leader.meeting.id,
                     title: leader.meeting.title,
                     start: leader.meeting.start,
                     count: card.meetings.count,
@@ -420,4 +450,5 @@ final class Coordinator {
         offered.removeAll { $0.id == meeting.id }
         evaluate()
     }
+
 }

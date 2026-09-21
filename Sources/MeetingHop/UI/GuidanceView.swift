@@ -105,6 +105,7 @@ struct GuidanceView: View {
         switch state {
         case .firstRun, .noCalendars: return "calendar"
         case .accessDenied: return "lock"
+        case .translocated: return "shippingbox"
         }
     }
 }

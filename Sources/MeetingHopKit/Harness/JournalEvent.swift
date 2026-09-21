@@ -99,8 +99,49 @@ public enum JournalData {
 
     /// `calendar access`: granted or denied, nothing else — EventKit hands
     /// back only a `Bool` here, and that is all R13 asks this event to carry.
-    public static func calendarAccess(granted: Bool) -> [String: JournalValue] {
-        ["granted": .boolean(granted)]
+    /// `calendar access`: whether EventKit granted access, plus WHY when it
+    /// did not.
+    ///
+    /// `granted` alone was not diagnosable. A stranger run recorded
+    /// `granted: false` for two different states — the user refusing the
+    /// prompt, and EventKit failing before any prompt was shown — and the
+    /// scenarios could not tell them apart, so a real defect read exactly
+    /// like the denial that `access-denied.sh` is written to produce.
+    ///
+    /// `status_before` is the status the launch found, before anything was
+    /// asked: `notDetermined` there and `denied` in `status` is a person
+    /// refusing the prompt just now, while `denied` in both is a refusal from
+    /// some earlier launch that macOS will never ask about again.
+    ///
+    /// `status` is EventKit's own authorization status after the request, so
+    /// "notDetermined" (nothing was ever asked) is distinguishable from
+    /// "denied" (asked and refused). `failure` is present only when the
+    /// request threw, and carries the error's description, which names no
+    /// calendar content — it is about the request, not what it would have
+    /// read (KTD3).
+    ///
+    /// `skippedReason` is additive: present only when `Coordinator.start()`
+    /// never called `requestAccess()` at all, currently just `"translocated"`
+    /// (`BundleTranslocation`). `granted` stays `false` in that case too, but
+    /// it is not a refusal — nobody was asked and nothing was denied — which
+    /// is exactly what this field distinguishes it from, the same way
+    /// `status`/`status_before` already distinguish a fresh refusal from an
+    /// old one. Every existing field keeps its old meaning, so an
+    /// `expect_event "calendar access" granted=…` line written before this
+    /// field existed still matches exactly what it matched before.
+    public static func calendarAccess(
+        granted: Bool,
+        status: String? = nil,
+        failure: String? = nil,
+        statusBefore: String? = nil,
+        skippedReason: String? = nil
+    ) -> [String: JournalValue] {
+        var data: [String: JournalValue] = ["granted": .boolean(granted)]
+        if let status { data["status"] = .string(status) }
+        if let failure { data["failure"] = .string(failure) }
+        if let statusBefore { data["status_before"] = .string(statusBefore) }
+        if let skippedReason { data["skipped_reason"] = .string(skippedReason) }
+        return data
     }
 
     /// `calendars counted` / `upcoming counted`: one scalar field, `count`,
@@ -127,14 +168,38 @@ public enum JournalData {
     /// a scenario asserts to carry a checkable field, and "a card is up" is
     /// not the same end state as "a card holding a double booking is up".
     ///
+    /// `id_hash` is additive, added the day a scenario's own predicted click
+    /// target turned out to be built on a guess that was never actually
+    /// true. `AccessibilityID.HUD.join(idHash:)` — the leading offer's own
+    /// Join button — is `hash(meeting.id)`, and `meeting.id` is EventKit's
+    /// `eventIdentifier` (`CalendarSource.fetch`). A scenario fixture that
+    /// seeds an event through Calendar's own AppleScript dictionary gets
+    /// back that dictionary's `uid` instead, which reads like the same kind
+    /// of identifier and is not: measured directly against the same seeded
+    /// event on 2026-09-21, `uid` and `eventIdentifier` are two different
+    /// strings in two different formats (Calendar's own single UUID versus
+    /// EventKit's `<calendar-id>:<event-id>` pair), and nothing has ever
+    /// documented them as equal — `seed-calendar.applescript`'s own header
+    /// flagged exactly this as unverified from the day it was written. A
+    /// scenario predicting the click target from `uid` was therefore always
+    /// one hash away from the button EventKit's own identifier actually
+    /// named; this field lets it stop predicting and read the real one
+    /// instead. It carries only the hash, never the raw id: the hash is
+    /// already public on the accessibility surface as the Join button's own
+    /// `AXIdentifier` suffix (KTD9), so journaling it crosses nothing R13
+    /// does not already allow past the accessibility tree.
+    ///
     /// `verbose` is `AppIdentity.isVerbose()` — U8 wires the flag through
     /// (echoed on `harness started`) but leaves its enforcement (the
     /// app-fresh tier's exit 2, the gate's refusal of a report built with
     /// it) to U14, which actually drives that fixture flag from the runner.
     /// With `verbose` false — every real user launch — `title` never
-    /// appears; only its hash does.
-    public static func cardShown(title: String, start: Date, count: Int, urgent: Bool, verbose: Bool) -> [String: JournalValue] {
+    /// appears; only its hash does. `id` is never revealed even under
+    /// `verbose`: nothing has asked for the raw identifier, only for the
+    /// hash the button already carries.
+    public static func cardShown(id: String, title: String, start: Date, count: Int, urgent: Bool, verbose: Bool) -> [String: JournalValue] {
         var data: [String: JournalValue] = [
+            "id_hash": .string(AccessibilityID.hash(id)),
             "title_hash": .string(AccessibilityID.hash(title)),
             "start": .string(timestampFormatter.string(from: start)),
             "count": .integer(count),

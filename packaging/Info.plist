@@ -12,10 +12,41 @@
   <key>CFBundleVersion</key><string>__BUILD__</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
-  <key>NSHumanReadableCopyright</key><string>MIT licensed</string>
+  <!-- The copyright line of the standard About panel, which the status
+       item's menu opens. Without this key the panel shows a version and
+       nothing else. Same statement as LICENSE's own copyright line. -->
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © 2026 Andrea Giannangelo. MIT licensed.</string>
   <key>NSCalendarsFullAccessUsageDescription</key>
   <string>MeetingHop reads your calendar to find the next meeting with a join link.</string>
   <key>NSCalendarsUsageDescription</key>
   <string>MeetingHop reads your calendar to find the next meeting with a join link.</string>
+  <!--
+  Sparkle (U13 / R12, R14). The feed is served from the public repository's
+  gh-pages branch, outside the blast radius of packaging/publish-public.sh,
+  which replaces the public working tree wholesale on every sync (KTD6). The
+  URL is frozen into every build that ships with it.
+  -->
+  <key>SUFeedURL</key>
+  <string>https://facens.github.io/meetinghop/appcast.xml</string>
+  <!--
+  MeetingHop's own public key, generated 2026-09-21 with `generate_keys
+  --account meetinghop` — a separate pair from AgentMenu's, so a compromise
+  of one project does not reach the other (KTD7). Never regenerated: every
+  shipped binary carries it. The private half is in 1Password and, for the
+  promotion job, in the release-promotion environment.
+  -->
+  <key>SUPublicEDKey</key>
+  <string>lQhFplfLNlaYSJAuRhrSSwavcfIlQa+nSglCOgYTgpQ=</string>
+  <!--
+  R14: present and true, so no update-permission prompt appears on the
+  second launch — Sparkle asks that question only when the key is absent.
+  KTD9: checking and installing are both automatic by default, and the
+  promotion gate is the human check that replaces the one this removes.
+  -->
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUAutomaticallyUpdate</key>
+  <true/>
 </dict>
 </plist>

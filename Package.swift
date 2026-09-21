@@ -25,6 +25,13 @@ let package = Package(
         // run` resolving against targets is not the same guarantee.
         .executable(name: "MeetingHopKitTests", targets: ["MeetingHopKitTests"]),
     ],
+    // U13 / R12: Sparkle is attached to the app executable alone, below.
+    // The same floor AgentMenu pins, and the same reason: the package
+    // resolves an XCFramework that packaging/bundle.sh copies into the
+    // bundle and signs bottom-up.
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.10.0"),
+    ],
     targets: [
         .target(
             name: "MeetingHopKit",
@@ -32,8 +39,18 @@ let package = Package(
         ),
         .executableTarget(
             name: "MeetingHop",
-            dependencies: ["MeetingHopKit"],
-            path: "Sources/MeetingHop"
+            // Sparkle here and nowhere else: attaching it to MeetingHopKit
+            // would pull AppKit into the probe and the test runner, which
+            // packaging/check-source.sh exists to prevent.
+            dependencies: ["MeetingHopKit", .product(name: "Sparkle", package: "Sparkle")],
+            path: "Sources/MeetingHop",
+            linkerSettings: [
+                // The framework ships inside the bundle, so the executable
+                // resolves @rpath/Sparkle.framework relative to itself.
+                // Without this the app links here and dies at launch
+                // everywhere, including here.
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+            ]
         ),
         // Depends on the Kit only, not on MeetingHop: an executableTarget's
         // non-entry-point symbols are not exported for another executable to

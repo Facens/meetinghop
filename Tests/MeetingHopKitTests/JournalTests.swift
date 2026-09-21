@@ -443,17 +443,26 @@ func runJournalTests(_ t: TestRunner) {
     })()
 
     // MARK: - 14. `card shown` carries a hash of the title, never the title
-    // itself — unless `verbose` is explicitly set, and only then.
+    // itself — unless `verbose` is explicitly set, and only then. It also
+    // carries a hash of the id (the Join button's own AXIdentifier suffix),
+    // never the raw id, whatever `verbose` is — added 2026-09-21 so a
+    // scenario can read the real click target instead of predicting it from
+    // a value (Calendar's own `uid`) that turned out not to equal EventKit's
+    // `eventIdentifier`.
 
     ({
+        let id = "0CF804E9-0E66-436E-A0AC-0813001FA918:37A7FED8-124D-4F83-B342-571F95C1412A"
         let title = "1:1 with a direct report — confidential comp discussion"
         let start = Date()
-        let quiet = JournalData.cardShown(title: title, start: start, count: 1, urgent: false, verbose: false)
+        let quiet = JournalData.cardShown(id: id, title: title, start: start, count: 1, urgent: false, verbose: false)
         t.expect(quiet["title"] == nil, "with verbose off, no raw-title field is present at all")
-        t.expectEqual(quiet["title_hash"], .string(AccessibilityID.hash(title)), "the hash is present instead")
+        t.expect(quiet["id"] == nil, "the raw id is never present, verbose or not — only its hash")
+        t.expectEqual(quiet["title_hash"], .string(AccessibilityID.hash(title)), "the title hash is present instead")
+        t.expectEqual(quiet["id_hash"], .string(AccessibilityID.hash(id)), "…and the id hash, the same hash the Join button's own AXIdentifier carries")
 
-        let loud = JournalData.cardShown(title: title, start: start, count: 1, urgent: false, verbose: true)
+        let loud = JournalData.cardShown(id: id, title: title, start: start, count: 1, urgent: false, verbose: true)
         t.expectEqual(loud["title"], .string(title), "verbose is the only way the raw title appears")
+        t.expect(loud["id"] == nil, "…but never the raw id, even under verbose — nothing has asked for it")
     })()
 
     // MARK: - 15. `calendars counted` and `upcoming counted` are distinct
@@ -661,5 +670,22 @@ func runJournalTests(_ t: TestRunner) {
             AppIdentity.harnessSuiteName(defaults: suite) == nil,
             "but the argument-domain-only read does not mistake it for a launch argument"
         )
+    })()
+
+    // MARK: - 23. `calendar access`'s `skipped_reason` is additive: absent by
+    // default, so every line this field did not exist for still matches
+    // exactly what it matched before, and present only when
+    // `Coordinator.start()` skipped the request outright
+    // (`BundleTranslocation`) rather than making it and being refused.
+
+    ({
+        let requested = JournalData.calendarAccess(granted: false, status: "denied", statusBefore: "notDetermined")
+        t.expect(requested["skipped_reason"] == nil, "a real, answered request carries no skipped_reason field at all")
+        t.expectEqual(requested["granted"], .boolean(false), "…and its other fields are exactly what they were before this field existed")
+
+        let skipped = JournalData.calendarAccess(granted: false, skippedReason: "translocated")
+        t.expectEqual(skipped["skipped_reason"], .string("translocated"), "a skipped request says why")
+        t.expectEqual(skipped["granted"], .boolean(false), "…and still carries granted: false — nobody was asked, and nobody said yes")
+        t.expect(skipped["status"] == nil, "…but no status: EventKit was never asked, so it has no authorization status to report")
     })()
 }

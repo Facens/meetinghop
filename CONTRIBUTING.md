@@ -2,6 +2,44 @@
 
 Small project, one maintainer, short rules.
 
+## Licence, and why a pull request needs a grant
+
+MeetingHop is released under the **MIT licence** (see [LICENSE](LICENSE)), and
+that stays true: what is published here stays MIT, and nothing below takes back
+a right that licence already gives you.
+
+A paid version of MeetingHop may exist later. If it does, it will be
+**additional code that is never published**, not a relicensing of this
+repository. That shape is deliberate, and it is what makes the next paragraph
+necessary.
+
+**By submitting a contribution (a pull request, a patch, code in an issue), you
+grant Andrea Giannangelo a perpetual, irrevocable, worldwide, non-exclusive,
+royalty-free licence to use, reproduce, modify, prepare derivative works of,
+publicly display, sublicense, distribute and relicense your contribution,
+including under terms different from the project's current licence, and
+including commercial terms.** You keep the copyright in your contribution. You
+confirm you are entitled to grant this — that the work is yours, or that your
+employer has authorised it.
+
+**You also grant, on the same terms, a patent licence** covering any patent
+claim you own or control that your contribution — alone, or combined with this
+project — would otherwise infringe, to make, use, sell, offer to sell, import
+and otherwise transfer it.
+
+Concretely: your contribution may end up in a paid build of MeetingHop. That is
+stated here, upfront, rather than announced after the fact.
+
+A `Signed-off-by` trailer (a DCO) would **not** carry this grant — it licenses a
+patch under the project's *current* terms only. Projects that collected only a
+DCO and later needed to change licence had to go back and ask every past
+contributor, and some never finished. That is why the grant is a merge
+precondition here from the first day rather than something added later.
+
+The grant is enforced automatically: a bot asks you to accept it on your first
+pull request, and no outside contribution is merged before that acceptance is
+recorded.
+
 ## Build and test
 
 ```sh

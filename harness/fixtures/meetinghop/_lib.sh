@@ -37,14 +37,19 @@ MEETINGHOP_BUNDLE_ID="dev.facens.meetinghop"
 # so the two can never name two different files.
 MEETINGHOP_JOURNAL_LEAF="run.ndjson"
 
-# Where `harness/fixtures/meetinghop/calendar/apply.sh` persists a value it
-# computed in the guest and a host-side scenario cannot predict on its own —
-# the seeded event's Calendar-scripting `uid`, which
-# `harness/scenarios/meetinghop/meeting-in-three.sh` reads back and hashes
-# with `harness/lib/fixtures.sh`'s own `fixtures_path_hash` (see that
-# fixture's own apply.sh and harness/fixtures/meetinghop/seed-calendar.applescript
-# for why this has to be reported rather than computed host-side, and what
-# is still unverified about it).
+# Generic guest-state plumbing: a leaf a fixture's apply.sh can persist a
+# guest-computed value under, for a scenario to read back with
+# `fixtures_guest_capture` and `fx_state_read_command`, when nothing
+# host-side could have predicted the value instead. Unused by any fixture
+# as of 2026-09-21: `harness/fixtures/meetinghop/calendar/apply.sh` used to
+# persist the seeded event's Calendar-scripting `uid` here for
+# `harness/scenarios/meetinghop/meeting-in-three.sh` to read back and hash
+# — which predicted the wrong Join-button identifier on every run, because
+# that `uid` is not EventKit's `eventIdentifier` (see that scenario's own
+# comment, and `JournalData.cardShown`'s, for the fix: the app now journals
+# the hash it actually used, and the scenario reads that instead of
+# predicting anything). Left in place as infrastructure a later fixture may
+# still need.
 MEETINGHOP_STATE_LEAF=".meetinghop-harness-state"
 
 # fx_activate_journal <nonce>

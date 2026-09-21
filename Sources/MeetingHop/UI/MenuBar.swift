@@ -73,6 +73,15 @@ struct MenuBarModel {
 @MainActor
 final class MenuBarState: ObservableObject {
     @Published var model = MenuBarModel()
+    /// Update state is held beside the model rather than inside it: the
+    /// coordinator hands the model over whole on every tick, and an update
+    /// waiting for the user is not the coordinator's business to know or to
+    /// carry through five seconds of meeting scheduling (U13).
+    @Published var updatePending = false
+    /// False on a build that must not update itself — a local alpha, or one
+    /// with no signing key — which is what keeps the footer from offering a
+    /// check that can never find anything.
+    @Published var canCheckForUpdates = false
 }
 
 // MARK: - Popover content
@@ -84,6 +93,7 @@ struct MenuBarView: View {
     var onSettings: () -> Void
     var onPreview: () -> Void
     var onQuit: () -> Void
+    var onCheckForUpdates: () -> Void
 
     @Environment(\.colorScheme) private var scheme
 
@@ -141,6 +151,15 @@ struct MenuBarView: View {
                 }
             }
             Spacer()
+            // The gear is where both apps now keep Settings.
+            Button(action: onSettings) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Open MeetingHop settings")
+            .accessibilityIdentifier(AccessibilityID.MenuBar.settings)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
@@ -199,6 +218,17 @@ struct MenuBarView: View {
                 .font(.system(size: 10.5))
                 .foregroundStyle(.tertiary)
             Spacer()
+            // The control that comment anticipated. R18: an app with no Dock
+            // icon cannot rely on Sparkle's alert being noticed, so a waiting
+            // update says so here as well as on the status item.
+            if state.canCheckForUpdates {
+                Button(state.updatePending ? "Install Update…" : "Check for Updates") {
+                    onCheckForUpdates()
+                }
+                .buttonStyle(.link)
+                .font(.system(size: 10.5))
+                .accessibilityIdentifier(AccessibilityID.MenuBar.checkForUpdates)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.top, 9)
@@ -206,8 +236,6 @@ struct MenuBarView: View {
 
     private var buttonRow: some View {
         HStack(spacing: 14) {
-            Button("Settings…", action: onSettings)
-                .accessibilityIdentifier(AccessibilityID.MenuBar.settings)
             // Here because the card only appears on its own schedule, and
             // judging how it looks should not mean waiting for a meeting.
             Button("Preview card", action: onPreview)
@@ -300,12 +328,20 @@ final class MenuBarController: NSObject {
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private let state = MenuBarState()
+    /// `.applicationDefined` hands every dismissal to this object. These are
+    /// the two .transient used to handle: switching away (Cmd-Tab, or any
+    /// other app taking focus) and a click anywhere outside the popover.
+    private var resignObserver: NSObjectProtocol?
+    private var outsideClickMonitor: Any?
 
     var onJoin: ((UpcomingMeeting) -> Void)?
     var onPreviewCard: (() -> Void)?
     /// The popover's own way out of an empty state — the same action the
     /// onboarding card's button takes.
     var onCalendarHelp: ((GuidanceState) -> Void)?
+    /// Pressed from the popover footer. Held by `AppDelegate`, which owns
+    /// the updater.
+    var onCheckForUpdates: (() -> Void)?
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -313,16 +349,24 @@ final class MenuBarController: NSObject {
 
         statusItem.autosaveName = "MeetingHop"
         statusItem.button?.target = self
-        statusItem.button?.action = #selector(toggle)
+        statusItem.button?.action = #selector(click)
         statusItem.button?.toolTip = "MeetingHop — your next meeting"
+        // A status button sends its action on `.leftMouseUp` alone, which is
+        // why a right-click on the icon did nothing at all. Both, and the
+        // handler tells them apart.
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem.button?.setAccessibilityIdentifier(AccessibilityID.MenuBar.statusItem)
         renderIdleIcon()
 
-        // .transient, unlike the sibling app: it closes on an outside click and
-        // on deactivation for free. AgentMenu needs .applicationDefined because
-        // its popover opens menus of its own, which .transient would treat as
-        // outside clicks; this popover has plain buttons, so it does not.
-        popover.behavior = .transient
+        // .applicationDefined as of U13, where it used to be .transient.
+        // .transient dismisses on exactly the outside click Sparkle's update
+        // window produces, so a user who pressed "Check for Updates" would
+        // watch the popover vanish under the window it opened. Taking the
+        // behaviour means taking the two mechanisms .transient provided for
+        // free — the resign-active observer below and the outside-click
+        // monitor installed in show() — and AgentMenu's popover has carried
+        // both since it made the same change.
+        popover.behavior = .applicationDefined
         popover.animates = false                 // a menu-bar popover should feel instant
         let hosting = NSHostingController(
             rootView: MenuBarView(
@@ -347,7 +391,8 @@ final class MenuBarController: NSObject {
                     self?.close()
                     self?.onPreviewCard?()
                 },
-                onQuit: { NSApp.terminate(nil) }
+                onQuit: { NSApp.terminate(nil) },
+                onCheckForUpdates: { [weak self] in self?.onCheckForUpdates?() }
             )
         )
         popover.contentViewController = hosting
@@ -355,8 +400,31 @@ final class MenuBarController: NSObject {
         // findable "window" to System Events rather than an anonymous one
         // (KTD9, mirroring AgentMenu's `Popover.container`).
         hosting.view.setAccessibilityIdentifier(AccessibilityID.MenuBar.popover)
+
+        // Switching away is a dismissal .transient used to handle. Without
+        // this the popover floats over whatever the user switched to until
+        // they click somewhere.
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.close() }
+        }
     }
 
+    deinit {
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+    }
+
+
+    /// What the footer shows about updates. Separate from `update(_:)`
+    /// because it changes on Sparkle's schedule, not the coordinator's.
+    func setUpdateState(canCheck: Bool, pending: Bool) {
+        state.canCheckForUpdates = canCheck
+        state.updatePending = pending
+    }
 
     func update(_ model: MenuBarModel) {
         state.model = model
@@ -369,8 +437,79 @@ final class MenuBarController: NSObject {
         }
     }
 
-    @objc private func toggle() {
+    /// Left-click opens the popover, right-click (and control-click, the
+    /// same gesture with one hand) opens the short menu every menu-bar app
+    /// is expected to have: Settings, About, Quit. Ported from AgentMenu's
+    /// StatusItemController.
+    @objc private func click() {
+        let event = NSApp.currentEvent
+        let secondary = event?.type == .rightMouseUp
+            || event?.modifierFlags.contains(.control) == true
+        guard secondary else {
+            toggle()
+            return
+        }
+        // The outside-click monitor is a *global* monitor, and a global
+        // monitor never sees events in this app's own windows — the status
+        // button is one of ours, so nothing else is going to close the
+        // popover before the menu opens over it.
+        close()
+        showStatusMenu()
+    }
+
+    private func toggle() {
         popover.isShown ? close() : show()
+    }
+
+    /// Hands the menu to the status item and clicks it, rather than calling
+    /// `popUp(positioning:at:in:)` on the button.
+    ///
+    /// A menu-bar manager (Ice, Bartender) moves the real button off every
+    /// screen, and anything positioned relative to it then lands nowhere near
+    /// the icon that was actually clicked. `NSStatusItem.menu` leaves the
+    /// placement to AppKit, which knows where the item actually is.
+    /// `performClick` blocks for as long as the menu is tracking, so the item
+    /// is handed its menu only for that moment — a permanently assigned menu
+    /// would swallow the left-click the popover needs.
+    private func showStatusMenu() {
+        guard let button = statusItem.button else { return }
+        statusItem.menu = statusMenu()
+        button.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    private func statusMenu() -> NSMenu {
+        let menu = NSMenu()
+        // Every item carries an explicit target. With a nil target AppKit
+        // looks for a handler on the responder chain, and an accessory app
+        // with no key window has none — `autoenablesItems` then draws the
+        // whole menu greyed out.
+        menu.addItem(item(title: "Settings…", action: #selector(openSettings), key: ","))
+        menu.addItem(item(title: "About MeetingHop", action: #selector(openAbout), key: ""))
+        menu.addItem(.separator())
+        menu.addItem(item(title: "Quit MeetingHop", action: #selector(quit), key: "q"))
+        return menu
+    }
+
+    private func item(title: String, action: Selector, key: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = self
+        return item
+    }
+
+    @objc private func openSettings() {
+        SettingsWindowController.shared.show()
+    }
+
+    @objc private func openAbout() {
+        AppDelegate.shared?.showAbout()
+    }
+
+    /// The same `terminate`, not `exit`, the popover footer's own Quit
+    /// button already uses: it lets AppKit run its normal shutdown path
+    /// rather than the process vanishing out from under it.
+    @objc private func quit() {
+        NSApp.terminate(nil)
     }
 
     private func show() {
@@ -398,9 +537,25 @@ final class MenuBarController: NSObject {
 
         // The popover is key so its own controls work.
         popover.contentViewController?.view.window?.makeKey()
+        installOutsideClickMonitor()
+    }
+
+    private func installOutsideClickMonitor() {
+        removeOutsideClickMonitor()
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            Task { @MainActor in self?.close() }
+        }
+    }
+
+    private func removeOutsideClickMonitor() {
+        if let monitor = outsideClickMonitor { NSEvent.removeMonitor(monitor) }
+        outsideClickMonitor = nil
     }
 
     private func close() {
+        removeOutsideClickMonitor()
         popover.performClose(nil)
     }
 

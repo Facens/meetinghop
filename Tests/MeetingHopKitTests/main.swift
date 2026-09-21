@@ -6,6 +6,7 @@ import Foundation
 let runner = TestRunner()
 
 runMeetingLinkTests(runner)
+runUpdatePolicyTests(runner)
 runCalendarRulesTests(runner)
 runAllDayRuleTests(runner)
 runSchedulerTests(runner)
@@ -25,5 +26,6 @@ runSettingsStoreTests(runner)
 runAccessibilityIDTests(runner)
 runOnboardingTests(runner)
 runHarnessFixtureTests(runner)
+runBundleTranslocationTests(runner)
 
 exit(runner.report())

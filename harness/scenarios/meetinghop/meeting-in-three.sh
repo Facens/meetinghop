@@ -18,18 +18,17 @@
 # observed (Covers AE4).
 #
 # The meeting id hash `hud.join.<idHash>` and `join fired`'s
-# `meeting_id_hash` are keyed on is assigned by EventKit at save time and
-# cannot be predicted from the host (see
-# harness/fixtures/meetinghop/seed-calendar.applescript's own header for
-# exactly what is and is not known about it). `fixture meetinghop/calendar
-# --event` seeds the meeting and persists the identifier Calendar's own
-# scripting dictionary hands back; this scenario reads it with
-# `fixtures_guest_capture` and hashes it with `fixtures_path_hash`
-# (harness/lib/fixtures.sh) — the same algorithm
-# `Sources/MeetingHopKit/Support/AccessibilityID.swift`'s `hash` uses. If
-# that equivalence is wrong on the first real run, the Join click fails
-# loudly with the hash it predicted, in `click`'s own error message
-# (harness/lib/scenario.sh) — never silently.
+# `meeting_id_hash` are keyed on is assigned by EventKit at save time, from
+# `eventIdentifier` — a different string, in a different format, than the
+# `uid` Calendar's own scripting dictionary hands back for the same event
+# (confirmed 2026-09-21, measured directly on a clone of first-run-golden:
+# see harness/fixtures/meetinghop/seed-calendar.applescript's own header,
+# "RESOLVED 2026-09-21"). This scenario used to predict the click target by
+# hashing that `uid`, which was wrong on every single run. It no longer
+# predicts anything: the app itself journals `id_hash` — the same hash it
+# used for the Join button's own AXIdentifier — on `card shown`
+# (`JournalData.cardShown`'s own doc comment), and the "card-shown" step
+# below reads it straight out of that event.
 #
 # The onboarding card is answered first, before anything here waits on the
 # meeting card. Both are borderless panels at the top centre of the screen
@@ -87,50 +86,57 @@ if [ "$(printf '%s' "$GATE_WAIT" | jq -r '.present')" = "true" ]; then
 else
     log "gatekeeper did not prompt (no quarantine attribute, or already cleared)"
 fi
+# Finder clears the quarantine flag when a person answers Open; `mv` from a
+# shell does not, so without this the app keeps running translocated.
+clear_quarantine MeetingHop
 
 step "launch"
 wait_for_status_item "$BUNDLE_ID" > /dev/null
 journal_at "$BUNDLE_ID" "$MEETINGHOP_JOURNAL_LEAF"
 
 step "calendar-permission"
-CALENDAR_WAIT="$(dialog wait calendar)"
-if [ "$(printf '%s' "$CALENDAR_WAIT" | jq -r '.present')" = "true" ]; then
-    shot "calendar-prompt" > /dev/null
-    dialog answer calendar allow > /dev/null
-    log "calendar permission prompted; answered allow (the dialog helper logs which button that pressed)"
-else
-    log "calendar permission did not prompt"
-fi
-# Asserted before anything calendar-shaped below: if the grant itself
-# silently failed, Coordinator.start() takes its early-return branch and
-# never calls calendar.start() at all, so `calendars counted` (and
-# everything after it) would never appear — a bare timeout further down
-# would then misleadingly blame the count or the card instead of the grant
-# that never happened.
-expect_event "calendar access" granted=true > /dev/null
+# confirm_dialog, not dialog+expect_event: a click succeeding is not the
+# same fact as the grant it was meant to produce landing in the journal —
+# see confirm_dialog's own doc comment (harness/lib/scenario.sh) for the
+# diagnosis. Also covers the early-return risk the old comment here named:
+# if the grant itself silently failed, Coordinator.start() never calls
+# calendar.start() at all, so `calendars counted` (and everything after it)
+# would never appear either — a bare timeout further down would then
+# misleadingly blame the count or the card instead of the grant that never
+# happened.
+confirm_dialog calendar allow "calendar access" granted=true > /dev/null
 
 step "dismiss-first-run-card"
 expect_event "guidance shown" state=first_run > /dev/null
 click "$BUNDLE_ID" "guidance.dismiss"
 expect_event "guidance dismissed" state=first_run > /dev/null
 
-step "predict-meeting-id"
-EVENT_UID="$(fixtures_guest_capture "$HARNESS_STEP_TIMEOUT" "$(fx_state_read_command event-uid)")"
-if [ -z "$EVENT_UID" ]; then
-    verdict fail "the calendar fixture reported no event uid to predict the meeting id hash from."
-fi
-ID_HASH="$(fixtures_path_hash "$EVENT_UID")"
-log "predicted meeting id hash: $ID_HASH (from the seeded event's Calendar-scripting uid — see seed-calendar.applescript's UNVERIFIED note)"
-
 step "calendars-counted"
-expect_event "calendars counted" count=1 > /dev/null
+# count=4: the golden image's own three built-in local calendars ("Calendar",
+# "US Holidays", "Birthdays" — verified directly, see no-accounts.sh's own
+# header) plus the one this scenario's fixture creates, "MeetingHop Harness".
+# `count=1` (this scenario's own assertion before 2026-09-21) assumed the
+# golden image started at zero, which was never true and was never checked
+# until now — first found when this scenario's own `date` usage-error bug
+# (fixed the same day) was fixed and it reached this event for the first
+# time.
+expect_event "calendars counted" count=4 > /dev/null
 
 step "upcoming-counted"
 expect_event "upcoming counted" count=1 > /dev/null
 
 step "card-shown"
 TITLE_HASH="$(fixtures_path_hash "$TITLE")"
-expect_event "card shown" title_hash="$TITLE_HASH" count=1 > /dev/null
+CARD_SHOWN="$(expect_event "card shown" title_hash="$TITLE_HASH" count=1)"
+# The real click target, read off the app's own report rather than
+# predicted — see this file's own header for why prediction is gone. Not
+# from Calendar's `uid` (see seed-calendar.applescript's own header),
+# only ever from what `JournalData.cardShown` actually hashed.
+ID_HASH="$(printf '%s' "$CARD_SHOWN" | jq -r '.data.id_hash // empty')"
+if [ -z "$ID_HASH" ]; then
+    verdict fail "card shown carried no id_hash to click by (see JournalData.cardShown) — got: $CARD_SHOWN"
+fi
+log "Join button id hash, from the app's own card shown event: $ID_HASH"
 shot "card-before-start" > /dev/null
 
 step "join"

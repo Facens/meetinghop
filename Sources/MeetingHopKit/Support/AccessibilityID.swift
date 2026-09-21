@@ -93,6 +93,10 @@ public enum AccessibilityID {
 
     /// The status item and the popover hanging off it (`MenuBar.swift`).
     public enum MenuBar {
+        /// U13: the update control in the popover footer. Sparkle's own
+        /// window carries no identifiers of ours, so this is the only part
+        /// of the update flow a scenario can press.
+        public static let checkForUpdates = "menubar.checkForUpdates"
         /// The menu-bar button that opens and closes the popover.
         public static let statusItem = "menuBar.statusItem"
         /// The popover's own hosting content view — what makes it a
@@ -117,6 +121,23 @@ public enum AccessibilityID {
     /// `scope` parameter is needed the way AgentMenuKit's `Settings.preset`
     /// takes one.
     public enum Settings {
+        /// U13's Updates section. Sparkle's own window carries no
+        /// identifiers of ours; these are the controls this app draws.
+        ///
+        /// Nested, and named the way AgentMenuKit names the same four
+        /// controls — the identifier strings were already identical, only
+        /// the Swift spelling differed, which made one app's scenario read
+        /// as if it were driving a different control from the other's.
+        public enum Updates {
+            public static let automatic = "settings.updates.automatic"
+            public static let beta = "settings.updates.beta"
+            public static let checkNow = "settings.updates.checkNow"
+            /// The line that says why the section is disabled on a build
+            /// that must not update itself — an alpha, or one with no
+            /// signing key.
+            public static let unavailable = "settings.updates.unavailable"
+        }
+
         public static let window = "settings.window"
         public static let leadMinutesStepper = "settings.leadMinutesStepper"
         public static let endingLeadMinutesStepper = "settings.endingLeadMinutesStepper"

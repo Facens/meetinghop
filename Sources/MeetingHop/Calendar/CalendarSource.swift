@@ -29,17 +29,46 @@ final class CalendarSource {
     /// same fetch produced.
     var calendarCount: Int { store.calendars(for: .event).count }
 
+    /// Why the last `requestAccess()` ended as it did, when it threw. Nil when
+    /// the request completed, whatever it answered.
+    ///
+    /// The `catch` here used to assign `authorized = false` and drop the
+    /// error. That made two different outcomes identical from the outside —
+    /// the user refusing the prompt, and EventKit failing before any prompt
+    /// appeared — and the journal recorded the same `granted: false` for
+    /// both. On the stranger tier it was always the second, and nothing said
+    /// so: `access-denied.sh` passed on a failure it had not caused, while
+    /// `no-accounts.sh` and `launch-at-login-reboot.sh` failed with no clue
+    /// which permission had gone wrong.
+    private(set) var lastAccessFailure: String?
+
     func requestAccess() async -> Bool {
+        lastAccessFailure = nil
         do {
             authorized = try await store.requestFullAccessToEvents()
         } catch {
             authorized = false
+            lastAccessFailure = String(describing: error)
         }
         return authorized
     }
 
     static var authorizationStatus: EKAuthorizationStatus {
         EKEventStore.authorizationStatus(for: .event)
+    }
+
+    /// EventKit's authorization status as a stable, loggable word. The
+    /// distinction that matters is `notDetermined` — nothing was ever asked —
+    /// against `denied`, which means it was asked and refused.
+    static var authorizationStatusName: String {
+        switch authorizationStatus {
+        case .notDetermined: return "notDetermined"
+        case .restricted: return "restricted"
+        case .denied: return "denied"
+        case .fullAccess: return "fullAccess"
+        case .writeOnly: return "writeOnly"
+        @unknown default: return "unknown"
+        }
     }
 
     func start(pollInterval: TimeInterval = 30) {

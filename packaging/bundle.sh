@@ -48,6 +48,35 @@ cp dist/icon/menubar/MenuBarIconTemplate*.png "$RES_DIR/"
 sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" packaging/Info.plist > "$APP/Contents/Info.plist"
 
 # ---------------------------------------------------------------------------
+# Sparkle (U13 / R12), ported from AgentMenu's bundle.sh, same order and same
+# reasons. SwiftPM has no notion of an app bundle, so the framework is copied
+# and signed here.
+#
+# `ditto`, never `cp -R` (KTD13): a framework is a versioned bundle whose
+# Versions/Current symlink `cp -R` would follow or mangle, and one that has
+# lost it does not load.
+SPARKLE_SRC="$(find "$ROOT/.build/artifacts" -type d -name Sparkle.framework -path '*macos*' -print -quit 2>/dev/null || true)"
+if [ -z "$SPARKLE_SRC" ]; then
+    echo "error: Sparkle.framework not found under .build/artifacts — run 'swift package resolve' first" >&2
+    exit 1
+fi
+FRAMEWORKS="$APP/Contents/Frameworks"
+mkdir -p "$FRAMEWORKS"
+rm -rf "$FRAMEWORKS/Sparkle.framework"
+ditto "$SPARKLE_SRC" "$FRAMEWORKS/Sparkle.framework"
+
+# Sparkle ships universal; this app ships arm64 and the release asserts it.
+# Thinning costs nothing because every one of these is re-signed below, and
+# it keeps an x86_64 half no release can run out of every download.
+while IFS= read -r macho; do
+    case "$(file -b "$macho")" in
+        *"universal binary"*)
+            lipo -thin arm64 "$macho" -output "$macho.arm64" && mv -f "$macho.arm64" "$macho"
+            ;;
+    esac
+done < <(find "$FRAMEWORKS/Sparkle.framework/Versions/B" -type f -exec sh -c 'case "$(file -b "$1")" in Mach-O*) echo "$1";; esac' _ {} \;)
+
+# ---------------------------------------------------------------------------
 # Signing. Ported from AgentMenu's packaging/bundle.sh.
 #
 # R1 / KTD1: the release identity is the Developer ID, referenced here once.
@@ -92,11 +121,32 @@ fi
 
 # KTD2 / R3: explicit, never --deep. MeetingHop has no nested executable
 # today, so the app is the only signing call; when Sparkle is embedded its
-# pieces are signed here first, deepest first, and the app last. No
-# entitlements: MeetingHop sends no Apple Events, and EventKit under an
-# unsandboxed hardened-runtime app is gated by the usage strings the plist
-# already carries.
-"${SIGN[@]}" "$APP"
+# pieces are signed here first, deepest first, and the app last — and the
+# entitlements go on the app alone, as AgentMenu's nested CLI is signed
+# without them.
+#
+# The entitlements file is not optional, and the comment that used to stand
+# here said the opposite: "EventKit under an unsandboxed hardened-runtime app
+# is gated by the usage strings the plist already carries". It is not. Under
+# the hardened runtime TCC refuses to ask for the calendar at all without
+# com.apple.security.personal-information.calendars — silently, with no
+# prompt and no error — which is what shipped in v0.1.0 and what every
+# stranger's first run met. See packaging/MeetingHop.entitlements for tccd's
+# own words.
+# Sparkle first, deepest first: the XPC services and the two helper apps are
+# code the framework contains, so a signature over the framework is only
+# valid once they are final. The framework is signed through its Versions/B
+# directory — signing the symlinked top level seals the symlinks, not the
+# code. None of these carry entitlements: the calendar entitlement belongs to
+# the app alone, and Sparkle's services need sandbox entitlements only when
+# the host app is sandboxed, which this one is not.
+SPARKLE_VERSION_DIR="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+"${SIGN[@]}" "$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc"
+"${SIGN[@]}" "$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc"
+"${SIGN[@]}" "$SPARKLE_VERSION_DIR/Updater.app"
+"${SIGN[@]}" "$SPARKLE_VERSION_DIR/Autoupdate"
+"${SIGN[@]}" "$SPARKLE_VERSION_DIR"
+"${SIGN[@]}" --entitlements "$ROOT/packaging/MeetingHop.entitlements" "$APP"
 
 # KTD16: the authority assertion where a Developer ID signed it, the
 # consistency assertion everywhere else. Authority includes consistency.

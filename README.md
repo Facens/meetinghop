@@ -5,13 +5,9 @@ joinable link and, a couple of minutes before it matters, puts a floating card
 at the top of the screen: a rose countdown dial, the meeting name, and one
 button.
 
-```
-┌─────────────────────────────┐
-│  ◔ 02:14                     │   rose countdown dial
-│  Sprint planning             │   the meeting name
-│                     Join  ✕  │   one button, and a close
-└─────────────────────────────┘
-```
+<p align="center">
+  <img src="assets/screenshots/card.png" width="440" alt="The MeetingHop card: a rose countdown dial reading 2 min, the meeting name Sprint planning with its service and start time under it, a Join button, and a close button">
+</p>
 
 ## What it does
 
@@ -31,8 +27,8 @@ button.
   built, then deleted: matching a confirmation button by its title is
   guesswork in every locale, and being wrong ends somebody else's meeting
   instead of yours. A Zoom App built on the official SDK would sidestep all of
-  that, and is not available to build against — the team.blue Marketplace
-  shows "Request to add" rather than a way to self-install one.
+  that, and is not available to build against: on a managed workspace the Zoom
+  Marketplace shows "Request to add" rather than a way to self-install one.
 - **It uses no Accessibility permission at all.** It once read Zoom's window
   titles to decide whether the button should say Join or Leave & Join, which
   was the only thing that surface bought and was a label rather than a
@@ -93,10 +89,14 @@ of it.
 
 ## Status
 
-Early. The overlay, the calendar reading, the link parsing, and the Zoom state
-reading are working; the test suite covering them is being built out alongside
-this restructure. Packaging, CI, and the release pipeline exist; no version
-has shipped yet.
+Early, but shipping. `v0.1.0` is on the
+[Releases page](https://github.com/Facens/meetinghop/releases) — Developer ID
+signed, notarized and stapled. The overlay, the calendar reading, the link
+parsing and the Zoom state reading all work; the suite covering them is still
+being filled in.
+
+**`v0.1.0` cannot update itself.** In-app updates are the next piece of work,
+so until then a new version is a download you do by hand.
 
 ## Test surface
 
@@ -169,6 +169,17 @@ may contain a `/`, so no screenshot, no host path and no hostname ever
 reaches it, and a finding is always one of a fixed, published set of codes,
 never free text.
 
+## Contributing
+
+Pull requests are welcome, and they carry a licence grant:
+[CONTRIBUTING.md](CONTRIBUTING.md) says what and why, upfront. A bot asks you
+to accept it on your first pull request.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+A paid version may exist later. If it does, it will be **code that is never
+published**, not a relicensing of this repository — what is MIT here stays MIT.
+Contributions carry a grant that permits that; it is stated upfront in
+[CONTRIBUTING.md](CONTRIBUTING.md) rather than announced afterwards.
