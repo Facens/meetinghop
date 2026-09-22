@@ -3,6 +3,16 @@
     <channel>
         <title>MeetingHop</title>
         <item>
+            <title>0.2.0</title>
+            <pubDate>Tue, 22 Sep 2026 09:02:38 +0000</pubDate>
+            <link>https://github.com/Facens/meetinghop</link>
+            <sparkle:version>0.2.0.100</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/Facens/meetinghop/releases/download/v0.2.0/MeetingHop-0.2.0.zip" length="1336471" type="application/octet-stream" sparkle:edSignature="3xwcc8umNUk2tHLyM+MiKepB2jXB5Y/B5c52VbYFVTVpn0lS+PKRwVJnG1mwPghHeggBVfoNngRwjreg2vhdDA=="/>
+        </item>
+        <item>
             <title>0.2.0-beta.6</title>
             <pubDate>Tue, 22 Sep 2026 08:51:06 +0000</pubDate>
             <link>https://github.com/Facens/meetinghop</link>
@@ -12,17 +22,6 @@
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/Facens/meetinghop/releases/download/v0.2.0-beta.6/MeetingHop-0.2.0-beta.6.zip" length="1336497" type="application/octet-stream" sparkle:edSignature="OyboXrgpPhDwLTkYYqw6FM8tILU3WjcRHxR6dbgIkncqpauQKYRTzQlV8Rb6peTet/CppDdg0omZtU2jj7JYAw=="/>
-        </item>
-        <item>
-            <title>0.2.0-beta.5</title>
-            <pubDate>Mon, 21 Sep 2026 14:12:38 +0000</pubDate>
-            <link>https://github.com/Facens/meetinghop</link>
-            <sparkle:channel>beta</sparkle:channel>
-            <sparkle:version>0.2.0.5</sparkle:version>
-            <sparkle:shortVersionString>0.2.0-beta.5</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/Facens/meetinghop/releases/download/v0.2.0-beta.5/MeetingHop-0.2.0-beta.5.zip" length="1336474" type="application/octet-stream" sparkle:edSignature="T4q86zSwAsgcKcxJx/4PSaWYeQMFDN/LQpijAkJuWOJT6vYshf0woUXULY7TS9TDjeKZc9AKkGnvRwUsCe+pDA=="/>
         </item>
     </channel>
 </rss>
