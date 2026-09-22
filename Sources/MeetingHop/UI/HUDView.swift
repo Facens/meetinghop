@@ -178,6 +178,31 @@ struct HUDView: View {
     private var model: HUDModel { state.model }
     private var accent: Color { Brand.accent(scheme, urgent: model.isUrgent) }
 
+    /// Every press on the card goes through here.
+    ///
+    /// A card that drops in on top of the pointer arrives disarmed, and the
+    /// first press on it only arms it. This is the rule AppKit already applies
+    /// to an inactive window's first click, and it exists because of a real
+    /// loss: a card appeared at 09:28:04 over a windowed Zoom, its close
+    /// button landed on Zoom's own top bar, and a click meant for Zoom two
+    /// seconds later answered the 09:30 meeting instead. Nothing on screen had
+    /// been read by then.
+    ///
+    /// The card also arms itself when the pointer leaves it — a pointer that
+    /// travelled onto this card came here on purpose. That path is an
+    /// improvement, not the guarantee: `onHover` is an `NSTrackingArea`
+    /// underneath, this panel never becomes key, and whether hover tracking
+    /// reaches it while another app is active is Apple's behaviour to change.
+    /// UNVERIFIED on a non-key panel. The press-to-arm rule above holds
+    /// either way, and costs one extra press when hover does not fire.
+    private func act(_ action: HUDAction) {
+        guard state.armed else {
+            state.armed = true
+            return
+        }
+        onAction(action)
+    }
+
     var body: some View {
         HStack(alignment: model.isMultiple ? .top : .center, spacing: 14) {
             CountdownDial(
@@ -219,6 +244,11 @@ struct HUDView: View {
         .padding(.trailing, 18)
         .padding(.vertical, 14)
         .frame(width: 440)
+        // Leaving the card arms it: the next pointer to arrive on it walked
+        // here, rather than being stood on when the card appeared.
+        .onHover { inside in
+            if !inside { state.armed = true }
+        }
         .overlay(
             // Inset by a full point: the window's mask clips at the very edge,
             // so a stroke sitting on the boundary loses its outer half and
@@ -259,7 +289,7 @@ struct HUDView: View {
 
             Spacer(minLength: 12)
 
-            Button(item.primaryLabel) { onAction(.join(item.meeting)) }
+            Button(item.primaryLabel) { act(.join(item.meeting)) }
                 .buttonStyle(JoinButtonStyle(accent: accent, compact: model.isMultiple))
                 // Only the first row can own the return key; the rest are
                 // mouse or tab targets. A default action on every row would
@@ -277,7 +307,7 @@ struct HUDView: View {
     /// auto-dismisses, so this control has to be permanently visible rather
     /// than revealed on hover.
     private var closeButton: some View {
-        Button { onAction(.dismissAll) } label: {
+        Button { act(.dismissAll) } label: {
             Image(systemName: "xmark")
                 .font(.system(size: 8.5, weight: .bold))
                 .foregroundStyle(closeHovered ? Color.primary : Color.secondary)
@@ -342,6 +372,10 @@ private struct JoinButtonStyle: ButtonStyle {
 @MainActor
 fileprivate final class HUDState: ObservableObject {
     @Published var model: HUDModel
+    /// Whether a press on this card acts, or only arms it — see
+    /// `HUDView.act`. Starts armed: a card that appears somewhere the pointer
+    /// is not can be clicked straight away, which is every ordinary case.
+    @Published var armed: Bool = true
     init(model: HUDModel) { self.model = model }
 }
 
@@ -360,5 +394,13 @@ final class HUDHostingController {
 
     func update(model: HUDModel) {
         state.model = model
+    }
+
+    /// Called by `AppDelegate` each time the card comes on screen, with
+    /// whether the pointer was already inside the panel's frame when it did.
+    /// Not called on the ordinary countdown update: a card the user has been
+    /// looking at for a minute must not disarm itself under their cursor.
+    func armed(_ armed: Bool) {
+        state.armed = armed
     }
 }

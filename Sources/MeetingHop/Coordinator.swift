@@ -39,12 +39,13 @@ final class Coordinator {
     /// Persisted: a card the user has answered must stay answered across a
     /// restart. Held in memory only, every relaunch re-offers a meeting they
     /// already joined, which is indistinguishable from nagging.
-    private var dismissedIDs: Set<String> {
-        get { Set(defaults.stringArray(forKey: Self.dismissedKey) ?? []) }
-        set { defaults.set(Array(newValue), forKey: Self.dismissedKey) }
+    ///
+    /// Answers rather than a flat set of ids, because the card and the pill
+    /// ask different questions of this — see `MeetingAnswers`.
+    private var answers: MeetingAnswers {
+        get { MeetingAnswerStorage.load(from: defaults) }
+        set { MeetingAnswerStorage.save(newValue, to: defaults) }
     }
-
-    private static let dismissedKey = AppIdentity.DefaultsKeys.dismissedMeetingIDs
     private var tick: Timer?
 
     /// The meetings the card is currently offering — more than one when the
@@ -102,6 +103,13 @@ final class Coordinator {
 
     init(defaults: UserDefaults = AppIdentity.activeDefaults()) {
         self.defaults = defaults
+        // Here rather than lazily inside `answers`' getter: that getter runs
+        // on every five-second tick, and a getter that writes is a getter
+        // nobody can reason about. `defaults` is already the resolved domain
+        // — the argument domain is populated before any Swift code runs, so
+        // a harness launch's suite is known by this point (KTD4) and the
+        // migration stays inside it.
+        MeetingAnswerStorage.migrateLegacy(in: defaults)
     }
 
     // MARK: - Lifecycle
@@ -307,7 +315,7 @@ final class Coordinator {
 
     func evaluate() {
         let now = Date()
-        pruneDismissed(now: now)
+        pruneAnswers(now: now)
         publishMenuBar(now: now)
 
         let input = SchedulerInput(
@@ -317,7 +325,7 @@ final class Coordinator {
             leadMinutes: settings.leadMinutes,
             endingLeadMinutes: settings.endingLeadMinutes,
             hideWhileSharing: settings.hideWhileSharing,
-            dismissedIDs: dismissedIDs,
+            dismissedIDs: answers.answered,
             offered: offered
         )
 
@@ -325,11 +333,18 @@ final class Coordinator {
         case .conceal:
             if !wasConcealed {
                 journal?.append(.cardConcealed, JournalData.cardConcealed(reason: "screen_sharing"))
+                log.notice("card concealed: screen_sharing")
                 wasConcealed = true
             }
             conceal?()
         case .hide:
             wasConcealed = false
+            // Only where a card actually went away. `.hide` is also the
+            // ordinary answer on a quiet afternoon, and one line per
+            // five-second tick would bury the transitions this exists for.
+            if lastCardSignature != nil {
+                log.notice("card hidden: nothing left to offer")
+            }
             lastCardSignature = nil
             dismissCard?()
         case .present(let card):
@@ -350,18 +365,37 @@ final class Coordinator {
                     urgent: card.urgent,
                     verbose: AppIdentity.isVerbose()
                 ))
+                logCard("card shown", leader: leader.meeting, count: card.meetings.count)
                 lastCardSignature = signature
             }
             present?(card)
         }
     }
 
-    /// Drops entries whose meeting has ended, so the set stays the size of a
-    /// day rather than growing for as long as the app is installed.
-    private func pruneDismissed(now: Date) {
+    /// One line per card transition, in a normal build.
+    ///
+    /// `Journal` records the same events and only exists on a harness launch,
+    /// so a released copy recorded nothing at all: answering "why did no card
+    /// appear for my 09:30?" meant reading `UIIntelligenceSupport` session
+    /// pairs out of the unified log to find the two timestamps that bracket a
+    /// card's life. The id is hashed and the title appears only under
+    /// `-MeetingHopVerbose YES`, which is the same rule `JournalData.cardShown`
+    /// follows (KTD9).
+    private func logCard(_ event: String, leader: UpcomingMeeting, count: Int) {
+        let id = AccessibilityID.hash(leader.id)
+        if AppIdentity.isVerbose() {
+            log.notice("\(event, privacy: .public): id=\(id, privacy: .public) count=\(count, privacy: .public) title=\(leader.title, privacy: .public)")
+        } else {
+            log.notice("\(event, privacy: .public): id=\(id, privacy: .public) count=\(count, privacy: .public)")
+        }
+    }
+
+    /// Drops answers whose meeting has ended, so the record stays the size of
+    /// a day rather than growing for as long as the app is installed.
+    private func pruneAnswers(now: Date) {
         let live = Set(upcoming.filter { $0.end > now }.map(\.id))
-        let kept = dismissedIDs.intersection(live)
-        if kept != dismissedIDs { dismissedIDs = kept }
+        var kept = answers
+        if kept.prune(keeping: live) { answers = kept }
     }
 
     /// The list keeps a meeting for as long as it runs, including the one in
@@ -379,14 +413,15 @@ final class Coordinator {
             in: upcoming,
             leadMinutes: settings.leadMinutes,
             now: now,
-            dismissedIDs: dismissedIDs
+            silencedIDs: answers.silenced
         )
 
         // "In <meeting>" claims the user is sitting in it. The clock passing a
-        // start time does not make that true — only answering the card does —
-        // so a meeting that started unanswered is named by its row, not by a
-        // header telling the user they are already there.
-        let inMeeting = current.flatMap { dismissedIDs.contains($0.id) ? $0 : nil }
+        // start time does not make that true, and neither does closing the
+        // card — only joining does — so a meeting that started unanswered is
+        // named by its row, not by a header telling the user they are already
+        // there.
+        let inMeeting = current.flatMap { answers.joined.contains($0.id) ? $0 : nil }
 
         let model = MenuBarModel(
             meetings: Array(list),
@@ -409,8 +444,16 @@ final class Coordinator {
     /// It answers every offer on the card at once: closing a double booking
     /// row by row would mean three clicks to say one thing.
     func dismissAll() {
+        let now = Date()
         let count = offered.count
-        for meeting in offered { dismissedIDs.insert(meeting.id) }
+        // Recorded as a close, which is not a join: the pill keeps the
+        // meeting until the grace window ends unless this close landed after
+        // it had already started (`MeetingAnswers.close`). One read-modify-
+        // write for the whole card rather than one per row.
+        var recorded = answers
+        for meeting in offered { recorded.close(meeting.id, start: meeting.start, now: now) }
+        answers = recorded
+        if let leader = offered.first { logCard("card dismissed", leader: leader, count: count) }
         offered = []
         journal?.append(.dismissed, JournalData.dismissed(count: count))
         dismissCard?()
@@ -435,6 +478,9 @@ final class Coordinator {
             meetingIDHash: AccessibilityID.hash(meeting.id),
             ok: ok
         ))
+        // Same rule as the journal line above: the hashed id and whether
+        // anything opened, never the URL — it carries a Zoom `pwd=`.
+        log.notice("join fired: id=\(AccessibilityID.hash(meeting.id), privacy: .public) ok=\(ok, privacy: .public)")
         guard ok else {
             report?("Could not open \(meeting.title).")
             return
@@ -446,7 +492,9 @@ final class Coordinator {
     /// waiting out the rest of the five-second tick with a row on screen the
     /// user has already dealt with.
     private func answer(_ meeting: UpcomingMeeting) {
-        dismissedIDs.insert(meeting.id)
+        var recorded = answers
+        recorded.record(.joined, for: meeting.id)
+        answers = recorded
         offered.removeAll { $0.id == meeting.id }
         evaluate()
     }

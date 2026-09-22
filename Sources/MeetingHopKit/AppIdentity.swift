@@ -16,7 +16,7 @@ public enum AppIdentity {
     /// Defaults keys the app itself defines, namespaced under
     /// `bundleIdentifier`.
     ///
-    /// Deliberately just these six, not a scan of the `UserDefaults`
+    /// Deliberately just these seven, not a scan of the `UserDefaults`
     /// domain: Sparkle will later write its own `SU`-prefixed keys into
     /// this same domain, and a naive "every key in the domain starts with
     /// the identifier" check would fail the day that lands. `all` is the
@@ -25,7 +25,21 @@ public enum AppIdentity {
         public static let leadMinutes = "\(AppIdentity.bundleIdentifier).leadMinutes"
         public static let endingLeadMinutes = "\(AppIdentity.bundleIdentifier).endingLeadMinutes"
         public static let hideWhileSharing = "\(AppIdentity.bundleIdentifier).hideWhileSharing"
+        /// Superseded by `meetingAnswers`, and read once more after that: a
+        /// copy updating from 0.2.0 still has this array, and `Coordinator`
+        /// folds it in (`MeetingAnswers.migrating(legacy:)`) and removes it.
+        /// Kept in `all` so the same test still proves it is namespaced and
+        /// still gets cleaned up.
         public static let dismissedMeetingIDs = "\(AppIdentity.bundleIdentifier).dismissedMeetingIDs"
+        /// Every answer the user has given an offer, by meeting id — a
+        /// `[String: String]` of `MeetingAnswer` raw values.
+        ///
+        /// Replaces the flat `dismissedMeetingIDs` array because the card and
+        /// the menu-bar pill ask different questions of it: joining a meeting
+        /// and closing its card are not the same answer, and treating them as
+        /// one is what let a stray click take a meeting off every surface at
+        /// once. `MeetingAnswers` owns the distinction.
+        public static let meetingAnswers = "\(AppIdentity.bundleIdentifier).meetingAnswers"
         /// The first-run guidance has been answered. Written once, never
         /// cleared: a first run happens once (`OnboardingStorage`).
         public static let firstRunGuidanceSeen = "\(AppIdentity.bundleIdentifier).firstRunGuidanceSeen"
@@ -43,7 +57,7 @@ public enum AppIdentity {
 
         public static let all: [String] = [
             leadMinutes, endingLeadMinutes, hideWhileSharing, dismissedMeetingIDs,
-            firstRunGuidanceSeen, accessDeniedNoticeSeen,
+            meetingAnswers, firstRunGuidanceSeen, accessDeniedNoticeSeen,
         ]
     }
 

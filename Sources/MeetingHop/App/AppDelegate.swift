@@ -306,10 +306,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guidancePanel?.orderOut(nil)
 
         if let hosting, let panel {
+            // Whether the card is arriving or merely ticking. A card already
+            // on screen keeps whatever armed state the pointer has earned it;
+            // one coming back from a conceal is arriving, and is judged again.
+            let arriving = !panel.isVisible
             hosting.update(model: model)
             HUDWindow.fit(panel, hosting: hosting.view)
             HUDWindow.position(panel)
             panel.orderFrontRegardless()
+            if arriving { hosting.armed(!panel.frame.contains(NSEvent.mouseLocation)) }
             return
         }
 
@@ -323,6 +328,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         HUDWindow.position(panel)
         panel.orderFrontRegardless()
+        // Read after `position`, never before: the frame this compares against
+        // is the one the card actually lands in. `NSEvent.mouseLocation` and
+        // `NSWindow.frame` are both in screen coordinates, so they compare
+        // directly. See `HUDView.act` for what being disarmed costs a press.
+        controller.armed(!panel.frame.contains(NSEvent.mouseLocation))
     }
 
     private func tearDownCard() {

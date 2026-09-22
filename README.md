@@ -63,8 +63,8 @@ notarized, so it opens with no warning.
 signed, and notarized the same way as a final release, just published first
 so people can try it before it ships to everyone. It's published on the beta
 update channel and gets superseded once the matching final release lands. If
-you want to try one early, install it by hand the same way as above; once
-in-app updates ship, a Settings toggle will opt a copy into betas instead.
+you want to try one early, turn on **Receive beta updates** in Settings and a
+released copy will offer it to you; installing it by hand works too.
 
 ## Build from source
 
@@ -89,14 +89,19 @@ of it.
 
 ## Status
 
-Early, but shipping. `v0.1.0` is on the
+Early, but shipping. `v0.2.0` is on the
 [Releases page](https://github.com/Facens/meetinghop/releases) — Developer ID
 signed, notarized and stapled. The overlay, the calendar reading, the link
-parsing and the Zoom state reading all work; the suite covering them is still
-being filled in.
+parsing and the Zoom state reading all work, and the suite covering them runs
+on every push and again before every release.
 
-**`v0.1.0` cannot update itself.** In-app updates are the next piece of work,
-so until then a new version is a download you do by hand.
+**It updates itself.** `v0.2.0` carries Sparkle: a copy checks the release
+feed on its own, offers what it finds, and Settings holds the switches —
+whether to check automatically, and whether to receive betas. Two things that
+do not update themselves, both deliberately: a copy built locally with
+`make bundle`, which is on the alpha channel and is replaced by the next
+`make bundle`, and `v0.1.0`, which shipped before any of this existed and has
+to be replaced by hand once.
 
 ## Test surface
 

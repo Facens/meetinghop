@@ -257,18 +257,24 @@ public enum Scheduler {
     // MARK: - Menu-bar pill
 
     /// The pill outlives the card. Closing the card says "stop covering my
-    /// screen", not "forget the meeting", so a dismissed meeting keeps a
+    /// screen", not "forget the meeting", so a closed meeting keeps a
     /// countdown up in the menu bar until it starts.
-    /// A meeting that has started and was never answered keeps the pill — it
-    /// reads "now" rather than a countdown. Answering it is what stops the
-    /// pill, and only once it has started: a card closed before the meeting
-    /// begins still counts down, because closing the card says "stop covering
-    /// my screen", not "forget the meeting".
+    ///
+    /// It keeps the pill after that too. A meeting that has started and was
+    /// not joined reads "now" rather than a countdown, and `silencedIDs` —
+    /// `MeetingAnswers.silenced`, which is joins and post-start closes, not
+    /// every dismissal — is what stops it. The card's own set was used here
+    /// once, and that is how one stray click on the close button, two seconds
+    /// after a card the user never registered dropped in, took a meeting off
+    /// the card *and* out of the menu bar with nothing left to say it had
+    /// ever been offered. The window is still bounded by `missedGrace`: the
+    /// pill is a reminder, and the menu-bar list is what keeps the meeting
+    /// for the rest of its run.
     public static func pill(
         in meetings: [UpcomingMeeting],
         leadMinutes: Int,
         now: Date,
-        dismissedIDs: Set<String> = []
+        silencedIDs: Set<String> = []
     ) -> Pill? {
         // Same leadership order as the card: an imminent meeting outranks a
         // missed one, so a countdown is never replaced by "now" for a meeting
@@ -285,11 +291,13 @@ public enum Scheduler {
             )
         }
 
-        // Started. Answered means the user dealt with it; otherwise they are
-        // late for it and the pill is the only thing still saying so.
+        // Started. Silenced means the user dealt with it — they joined, or
+        // they closed a card for a meeting that was already running and so
+        // said no to it on purpose. Otherwise they are late for it and the
+        // pill is the only thing still saying so.
         let missed = meetings.first { m in
             m.end > now && m.start <= now
-                && !dismissedIDs.contains(m.id)
+                && !silencedIDs.contains(m.id)
                 && m.start >= now.addingTimeInterval(-missedGrace)
         }
         guard missed != nil else { return nil }

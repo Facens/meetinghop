@@ -263,7 +263,7 @@ func runSchedulerTests(_ t: TestRunner) {
         // Answered and in progress: the user is in it, so there is nothing to
         // remind them of.
         let joined = zoomMeeting("pill-joined", start: base.addingTimeInterval(-3 * 60), end: base.addingTimeInterval(27 * 60), meetingID: "13")
-        let pillForJoined = Scheduler.pill(in: [joined], leadMinutes: 5, now: base, dismissedIDs: ["pill-joined"]
+        let pillForJoined = Scheduler.pill(in: [joined], leadMinutes: 5, now: base, silencedIDs: ["pill-joined"]
         )
         t.expectEqual(pillForJoined, nil, "the pill never watches a meeting the user has answered and is in")
 
@@ -271,9 +271,41 @@ func runSchedulerTests(_ t: TestRunner) {
         // countdown survives, because closing the card quietens the reminder
         // rather than deleting it.
         let dismissedAhead = zoomMeeting("pill-dismissed-ahead", start: base.addingTimeInterval(3 * 60), end: base.addingTimeInterval(33 * 60), meetingID: "17")
-        let stillCounting = Scheduler.pill(in: [dismissedAhead], leadMinutes: 5, now: base, dismissedIDs: ["pill-dismissed-ahead"]
+        let stillCounting = Scheduler.pill(in: [dismissedAhead], leadMinutes: 5, now: base, silencedIDs: []
         )
         t.expectEqual(stillCounting, Scheduler.Pill(text: "3 min", urgent: false), "a card dismissed before the meeting starts keeps its countdown")
+    }
+    do {
+        // The regression this rule exists for. A card was closed two seconds
+        // after it appeared, before the meeting began, and the old pill read
+        // the card's own dismissal set: at the start time the countdown was
+        // replaced by nothing at all, and the meeting was gone from every
+        // surface. `MeetingAnswers.silenced` holds joins and post-start
+        // closes, and a close before the start is neither.
+        let closedEarly = zoomMeeting("pill-closed-early", start: base, end: base.addingTimeInterval(20 * 60), meetingID: "18")
+        let answers = MeetingAnswers([closedEarly.id: .closed])
+        t.expectEqual(
+            Scheduler.pill(in: [closedEarly], leadMinutes: 5, now: base, silencedIDs: answers.silenced),
+            Scheduler.Pill(text: "now", urgent: true, started: true),
+            "a card closed before the start still leaves a \"now\" pill once the meeting begins"
+        )
+        t.expectEqual(
+            Scheduler.pill(
+                in: [closedEarly], leadMinutes: 5,
+                now: base.addingTimeInterval(Scheduler.missedGrace + 1),
+                silencedIDs: answers.silenced
+            ),
+            nil,
+            "and it is still bounded by the grace window, not permanent"
+        )
+
+        // Closed while it was already running is a decision, not a deferral.
+        let declined = MeetingAnswers([closedEarly.id: .declined])
+        t.expectEqual(
+            Scheduler.pill(in: [closedEarly], leadMinutes: 5, now: base, silencedIDs: declined.silenced),
+            nil,
+            "a card closed after the meeting started takes the pill with it"
+        )
     }
 
     // MARK: - A meeting that started unanswered is still offered
