@@ -11,6 +11,25 @@ enum LaunchAtLogin {
         SMAppService.mainApp.status == .enabled
     }
 
+    /// `SMAppService.mainApp.status`, named the way `CalendarSource
+    /// .authorizationStatusName` names EventKit's own enum: the raw case
+    /// name, not a lower-snake scalar — this is a journal payload value, not
+    /// one of the enums `AccessibilityIDTests` holds to that rule. Read back
+    /// after `set`, never assumed from what was asked for: a `.requiresApproval`
+    /// registration still succeeded at the API and needs a human in System
+    /// Settings' own Login Items list before it is really true, which is
+    /// exactly what `isEnabled` (and `SettingsView`'s toggle, which reads it
+    /// the same way after writing) already refuses to paper over.
+    static var statusName: String {
+        switch SMAppService.mainApp.status {
+        case .notRegistered: return "notRegistered"
+        case .enabled: return "enabled"
+        case .requiresApproval: return "requiresApproval"
+        case .notFound: return "notFound"
+        @unknown default: return "unknown"
+        }
+    }
+
     static func set(_ enabled: Bool) {
         do {
             if enabled {

@@ -35,6 +35,16 @@ public enum JournalEvent: String, CaseIterable, Sendable {
     case guidanceAction = "guidance action"
     /// It was answered without acting.
     case guidanceDismissed = "guidance dismissed"
+    /// The launch-at-login prompt appeared (`LaunchAtLoginPrompt`) — a
+    /// second, unrelated first-run question, shown only after the calendar
+    /// guidance above has been answered or suppressed (they share one
+    /// on-screen slot).
+    case launchAtLoginPromptShown = "launch at login prompt shown"
+    /// It did not appear, and why — the same positive-for-absence proof
+    /// `guidanceSuppressed` gives for the card above it.
+    case launchAtLoginPromptSuppressed = "launch at login prompt suppressed"
+    /// It was answered, and what `SMAppService` actually did about it.
+    case launchAtLoginPromptAnswered = "launch at login prompt answered"
 }
 
 /// A value a journal line can carry.
@@ -283,5 +293,24 @@ public enum JournalData {
             "ok": .boolean(ok),
             "fell_back": .boolean(fellBack),
         ]
+    }
+
+    /// `launch at login prompt suppressed`: why it never appeared.
+    public static func launchAtLoginPromptSuppressed(
+        reason: LaunchAtLoginPromptSuppression
+    ) -> [String: JournalValue] {
+        ["reason": .string(reason.rawValue)]
+    }
+
+    /// `launch at login prompt answered`: what the user pressed, and what
+    /// `SMAppService.mainApp.status` reads back afterward — its own truth,
+    /// never a promise this payload makes on its behalf. `accepted: true`
+    /// with `status` still `"requiresApproval"` is a real, honest outcome:
+    /// `register()` succeeded at the API and System Settings has not yet
+    /// approved the Login Items entry, exactly the case `SettingsView`'s own
+    /// toggle handles by reading `LaunchAtLogin.isEnabled` back rather than
+    /// trusting what it just asked for.
+    public static func launchAtLoginPromptAnswered(accepted: Bool, status: String) -> [String: JournalValue] {
+        ["accepted": .boolean(accepted), "status": .string(status)]
     }
 }

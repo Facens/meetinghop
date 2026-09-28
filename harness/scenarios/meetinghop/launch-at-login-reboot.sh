@@ -1,21 +1,34 @@
 #!/bin/bash
-# HARNESS_STRANGER_ONLY: toggles a Settings control, opens the menu-bar
-# popover and Settings window, and screenshots both by AXIdentifier —
+# HARNESS_STRANGER_ONLY: answers the launch-at-login prompt by AXIdentifier,
+# opens the menu-bar popover and Settings window, and screenshots both —
 # screen-driving work this harness confines to the stranger tier
 # (harness/README.md, "Only the stranger tier drives the screen"). Also the
 # one scenario in this unit that reboots the guest itself, which only makes
 # sense on a disposable stranger-tier clone.
 #
 # R10/AE5, proven on the notarized build only (R10's own wording): with
-# launch-at-login toggled on, a guest reboot and auto-login leaves
-# MeetingHop running, its launch-at-login toggle still reading on, and no
-# fresh Calendar prompt. This is the one MeetingHop scenario that needs a
-# stable code identity across a relaunch it did not itself build — an
-# ad-hoc build's signature is not stable across relaunches, so its Calendar
-# grant and its SMAppService registration would not survive one either
-# (docs/releasing.md, "What a contributor without the certificate gets") —
-# which is exactly why R10 restricts this scenario to the notarized build,
-# not this file's own doing.
+# launch-at-login accepted from the first-run prompt, a guest reboot and
+# auto-login leaves MeetingHop running, its launch-at-login toggle still
+# reading on, and no fresh Calendar prompt. This is the one MeetingHop
+# scenario that needs a stable code identity across a relaunch it did not
+# itself build — an ad-hoc build's signature is not stable across relaunches,
+# so its Calendar grant and its SMAppService registration would not survive
+# one either (docs/releasing.md, "What a contributor without the certificate
+# gets") — which is exactly why R10 restricts this scenario to the notarized
+# build, not this file's own doing.
+#
+# THE LAUNCH-AT-LOGIN PROMPT, NOT THE SETTINGS TOGGLE, is what registers the
+# login item here. Before that prompt existed, this scenario clicked
+# `settings.launchAtLoginToggle` by hand to turn the preference on; now the
+# prompt asks the same question on first run and this scenario answers it the
+# way a real first-run user would. Accepting it, not the Settings toggle, is
+# what this unit's own brief asks a scenario to prove: "assert the prompt
+# appears and that accepting it registers the login item." The Settings
+# window is still opened and screenshotted afterward, purely as the
+# documentary evidence R17 allows — never asserted on, since nothing in the
+# journal or the AXIdentifier surface exposes a toggle's own boolean value to
+# read back (see the reboot section below for the one thing that IS
+# asserted: the app's own report of `SMAppService`'s status).
 #
 # Stated end state (R11's vocabulary): after the reboot, the app's own
 # status item is present again (`wait_for_status_item`, which itself first
@@ -36,22 +49,27 @@
 # is the only one that relaunches the app at all. Before the reboot the card
 # appears and is dismissed (`guidance shown` then `guidance dismissed`);
 # after it, the app writes `guidance suppressed` with `reason=already_seen`
-# instead of showing anything.
+# instead of showing anything. The launch-at-login prompt gets the same
+# proof, one layer down: shown and answered before the reboot
+# (`launch at login prompt shown` / `answered`), and suppressed with
+# `reason=already_asked` after it — never shown a second time.
 #
 # That is asserted as a positive on purpose. `harness/guest/wait.sh` matches
 # the presence of a line and has no way to wait for the absence of one, so
 # "the card did not come back" is not directly assertable at all — which is
 # exactly why the app journals the suppression rather than staying silent
 # about it. It also sidesteps the first-match trap this header warns about
-# just below: the pre-reboot launch *showed* the card rather than
-# suppressing it, so the first `guidance suppressed` line anywhere in the
-# file can only have been written after the reboot.
+# just below: the pre-reboot launch *showed* both panels rather than
+# suppressing them, so the first `guidance suppressed` / `launch at login
+# prompt suppressed` line anywhere in the file can only have been written
+# after the reboot.
 #
 # What that proves, in turn, is the whole persistence claim: the dismissal
-# was written to the same `UserDefaults` domain a plain Finder launch reads
-# (KTD4 — no `-MeetingHopDefaultsSuite` argument reaches an app opened by
-# harness/guest/install.sh, so `AppIdentity.activeDefaults()` is `.standard`
-# here), and it survived a real reboot rather than living in memory.
+# and the prompt's answer were both written to the same `UserDefaults`
+# domain a plain Finder launch reads (KTD4 — no `-MeetingHopDefaultsSuite`
+# argument reaches an app opened by harness/guest/install.sh, so
+# `AppIdentity.activeDefaults()` is `.standard` here), and both survived a
+# real reboot rather than living in memory.
 #
 # Deliberately NOT re-asserted after the reboot: `calendar access`.
 # `harness/guest/wait.sh` matches the *first* journal line satisfying its
@@ -66,6 +84,16 @@
 # scratch". Together they are the honest pair of facts this scenario can
 # prove; a redundant, misleading expect_event is not added just because
 # the event name matches R10's own wording.
+#
+# UNVERIFIED, and said so here rather than papered over: whether
+# `SMAppService.mainApp.register()` reports back `.enabled` directly on a
+# fresh VM the first time any app of this identity ever registers a login
+# item, or `.requiresApproval` instead (macOS can ask a person to confirm a
+# freshly-registered background item in System Settings before it actually
+# runs). This scenario asserts `accepted=true` on the answer event — the
+# fact that matters for "accepting registers the login item" — and logs
+# whatever `status` comes back rather than pinning a value nobody has run
+# this against yet.
 set -euo pipefail
 
 HARNESS_DIR="${HARNESS_DIR:?launch-at-login-reboot.sh must be run by harness/run.sh, which exports HARNESS_DIR.}"
@@ -128,22 +156,33 @@ step "calendar-permission"
 # harness research notes.
 confirm_dialog calendar allow "calendar access" granted=true > /dev/null
 
-# Answered before the Settings window is opened: the onboarding card sits at
-# the top centre of the screen and would otherwise be in every screenshot
-# this scenario asks a human to compare.
+# Answered before the launch-at-login prompt or the Settings window is
+# opened: both onboarding panels sit at the top centre of the screen and
+# would otherwise be in every screenshot this scenario asks a human to
+# compare.
 step "dismiss-first-run-card"
 expect_event "guidance shown" state=first_run > /dev/null
 click "$BUNDLE_ID" "guidance.dismiss"
 expect_event "guidance dismissed" state=first_run > /dev/null
 
+# The launch-at-login prompt only appears once the calendar guidance above
+# is out of the way (`Coordinator.decideLaunchAtLoginPrompt`'s own doc
+# comment) — which is exactly why it is waited for here, after the dismiss
+# above, rather than raced against it.
+step "launch-at-login-prompt"
+expect_event "launch at login prompt shown" > /dev/null
+shot "launch-at-login-prompt" > /dev/null
+
+step "accept-launch-at-login"
+click "$BUNDLE_ID" "launchAtLoginPrompt.accept"
+ANSWERED="$(expect_event "launch at login prompt answered" accepted=true)"
+STATUS="$(printf '%s' "$ANSWERED" | jq -r '.data.status // empty')"
+log "launch-at-login registration status after accepting: ${STATUS:-unknown} (see this file's own UNVERIFIED note)"
+
 step "open-settings"
 open_status_item "$BUNDLE_ID"
 click "$BUNDLE_ID" "menuBar.settings"
-shot "settings-before-toggle" > /dev/null
-
-step "toggle-launch-at-login"
-click "$BUNDLE_ID" "settings.launchAtLoginToggle"
-shot "settings-toggled-on" > /dev/null
+shot "settings-after-accept" > /dev/null
 
 step "reboot"
 REBOOT_CMD="bash $(_reboot_script_path)"
@@ -195,6 +234,14 @@ expect_event "harness started" boot=2 > /dev/null
 # asserted as this positive, and why first-match semantics are safe here).
 step "no-second-first-run-card"
 expect_event "guidance suppressed" state=first_run reason=already_seen > /dev/null
+
+# Same proof, one layer down, for the launch-at-login prompt: the pre-reboot
+# launch wrote `launch at login prompt shown` and then `answered`, so the
+# first `suppressed` line anywhere in this journal can only be post-reboot —
+# and `reason=already_asked` is what confirms the answer really persisted to
+# the standard UserDefaults domain rather than living only in memory.
+step "no-second-launch-at-login-prompt"
+expect_event "launch at login prompt suppressed" reason=already_asked > /dev/null
 
 step "no-new-calendar-prompt"
 POST_CAL_WAIT="$(dialog wait calendar 10)"

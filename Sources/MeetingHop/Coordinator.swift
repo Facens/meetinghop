@@ -88,11 +88,30 @@ final class Coordinator {
     var presentGuidance: ((GuidanceState) -> Void)?
     /// Take it off, for good: it is answered, not concealed.
     var dismissGuidance: (() -> Void)?
+    /// Put the launch-at-login prompt on screen. Called at most once per
+    /// launch, and only after the guidance card above has been answered or
+    /// suppressed — see `decideLaunchAtLoginPrompt`'s own doc comment.
+    var presentLaunchAtLoginPrompt: (() -> Void)?
+    /// Take it off, for good: answered, not concealed — the same contract
+    /// `dismissGuidance` carries.
+    var dismissLaunchAtLoginPrompt: (() -> Void)?
 
     /// What the onboarding card is showing, or `nil` when there is none.
     /// Held rather than passed back in from the view so the view has one job
     /// (draw a state and report a press) and this type keeps the decision.
     private var guidance: GuidanceState?
+
+    /// Whether this launch is translocated — computed once, at the top of
+    /// `start()`, and kept here rather than recomputed, because
+    /// `decideLaunchAtLoginPrompt` needs it too and may run later, from
+    /// `answerGuidance`, well after the branch in `start()` that first
+    /// learned it.
+    private var translocated = false
+    /// Whether the launch-at-login prompt is still awaiting an answer —
+    /// the same "held rather than passed back in" reason `guidance` is
+    /// stored above, and the guard that keeps a stray second call to
+    /// `launchAtLoginPromptAnswered` (there should never be one) a no-op.
+    private var launchAtLoginPromptPending = false
 
     /// The last calendar count `CalendarSource` reported, so the popover can
     /// tell "Calendar.app is empty" from "nothing left today" without asking
@@ -127,6 +146,7 @@ final class Coordinator {
         // `BundleTranslocation`'s own doc comment for the VM test that
         // disproved the harness-side fix this replaces).
         if BundleTranslocation.isTranslocated(bundlePath: Bundle.main.bundlePath) {
+            translocated = true
             journal?.append(.calendarAccess, JournalData.calendarAccess(
                 granted: false,
                 skippedReason: "translocated"
@@ -209,6 +229,11 @@ final class Coordinator {
             presentGuidance?(state)
         case .suppress(let state, let reason):
             journal?.append(.guidanceSuppressed, JournalData.guidanceSuppressed(state: state, reason: reason))
+            // Nothing is occupying the onboarding slot, so the launch-at-login
+            // prompt can use it straight away — see
+            // `decideLaunchAtLoginPrompt`'s own doc comment for why this has
+            // to wait for the guidance card one way or the other.
+            decideLaunchAtLoginPrompt()
         }
     }
 
@@ -249,6 +274,61 @@ final class Coordinator {
         OnboardingStorage.remember(state, in: defaults)
         guidance = nil
         dismissGuidance?()
+        // The guidance card just answered was occupying the same top-centre
+        // slot the launch-at-login prompt uses; now that it is gone, decide
+        // whether that prompt is owed.
+        decideLaunchAtLoginPrompt()
+    }
+
+    // MARK: - Launch-at-login prompt
+
+    /// Runs `LaunchAtLoginPrompt.decide` against what this domain and
+    /// `SMAppService` both already know, and does what it says.
+    ///
+    /// Called once per launch, from exactly one of two places, never both:
+    /// `decideGuidance`'s `.suppress` branch, when no calendar card was ever
+    /// shown, and `answerGuidance`, once the calendar card that WAS shown
+    /// has been dismissed or acted on. Either way this only runs once the
+    /// onboarding slot at the top of the screen is free — the meeting card
+    /// aside, the two onboarding panels never compete for it, because this
+    /// one is never asked to appear until the other is already gone.
+    private func decideLaunchAtLoginPrompt() {
+        switch LaunchAtLoginPrompt.decide(
+            translocated: translocated,
+            alreadyEnabled: LaunchAtLogin.isEnabled,
+            asked: LaunchAtLoginPromptStorage.asked(in: defaults)
+        ) {
+        case .show:
+            launchAtLoginPromptPending = true
+            journal?.append(.launchAtLoginPromptShown)
+            presentLaunchAtLoginPrompt?()
+        case .suppress(let reason):
+            journal?.append(.launchAtLoginPromptSuppressed, JournalData.launchAtLoginPromptSuppressed(reason: reason))
+            // Translocated is the one reason that asks again later — see
+            // `LaunchAtLoginPrompt.decide`'s own doc comment.
+            guard reason != .translocated else { return }
+            LaunchAtLoginPromptStorage.remember(in: defaults)
+        }
+    }
+
+    /// The prompt's own two buttons. `accepted` is what the user pressed;
+    /// `LaunchAtLogin.statusName` afterward is `SMAppService`'s own truth,
+    /// read back rather than assumed — the same rule `SettingsView`'s toggle
+    /// already follows, and the reason `LaunchAtLogin.set`'s failure path
+    /// (a caught `register()`/`unregister()` error, logged and nothing more)
+    /// needs no special handling here: whatever it did or did not do, this
+    /// reports what is actually true.
+    func launchAtLoginPromptAnswered(accepted: Bool) {
+        guard launchAtLoginPromptPending else { return }
+        launchAtLoginPromptPending = false
+        LaunchAtLoginPromptStorage.remember(in: defaults)
+        if accepted {
+            LaunchAtLogin.set(true)
+        }
+        journal?.append(.launchAtLoginPromptAnswered, JournalData.launchAtLoginPromptAnswered(
+            accepted: accepted, status: LaunchAtLogin.statusName
+        ))
+        dismissLaunchAtLoginPrompt?()
     }
 
     /// Opens where the state says to go, and falls back to Calendar.app when

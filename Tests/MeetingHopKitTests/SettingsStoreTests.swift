@@ -179,9 +179,10 @@ func runSettingsStoreTests(_ t: TestRunner) {
                 AppIdentity.DefaultsKeys.meetingAnswers,
                 AppIdentity.DefaultsKeys.firstRunGuidanceSeen,
                 AppIdentity.DefaultsKeys.accessDeniedNoticeSeen,
+                AppIdentity.DefaultsKeys.launchAtLoginPromptAsked,
             ],
             """
-            the key list is the original four, the onboarding guidance's own two,             and `meetingAnswers`, which supersedes `dismissedMeetingIDs` — the older             key stays on the list because `Coordinator` still reads it once, to fold             it in, and then removes it
+            the key list is the original four, the onboarding guidance's own two,             and `meetingAnswers`, which supersedes `dismissedMeetingIDs` — the older             key stays on the list because `Coordinator` still reads it once, to fold             it in, and then removes it — plus the launch-at-login prompt's own key
             """
         )
     })()

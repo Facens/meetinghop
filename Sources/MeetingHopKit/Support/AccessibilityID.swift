@@ -89,6 +89,26 @@ public enum AccessibilityID {
         public static let dismiss = "guidance.dismiss"
     }
 
+    // MARK: LaunchAtLoginPrompt
+
+    /// The launch-at-login prompt (`LaunchAtLoginPromptView.swift`) — a
+    /// second onboarding panel, distinct from `Guidance` above for the
+    /// reason `LaunchAtLoginPrompt`'s own doc comment gives (it answers an
+    /// unrelated question, not a fifth `GuidanceState`).
+    public enum LaunchAtLoginPrompt {
+        /// The panel itself — a borderless `HUDPanel`, applied with
+        /// `setAccessibilityIdentifier` in `HUDWindow.make`. Its own
+        /// identifier, never `Guidance.panel` or `HUD.panel`: `findByIdentifier`
+        /// returns the first window it walks to, so a shared identifier would
+        /// make a click meant for one panel land on whichever the walk
+        /// reached first.
+        public static let panel = "launchAtLoginPrompt.panel"
+        /// The default button: registers the login item.
+        public static let accept = "launchAtLoginPrompt.accept"
+        /// The secondary button: declines, without touching `SMAppService`.
+        public static let decline = "launchAtLoginPrompt.decline"
+    }
+
     // MARK: MenuBar
 
     /// The status item and the popover hanging off it (`MenuBar.swift`).

@@ -110,7 +110,10 @@ struct GuidanceView: View {
     }
 }
 
-private struct GuidanceButtonStyle: ButtonStyle {
+/// Shared with `LaunchAtLoginPromptView`, the second onboarding panel: same
+/// window chrome, same primary-button look, so the two read as one family of
+/// cards rather than two hand-tuned ones that could drift apart.
+struct GuidanceButtonStyle: ButtonStyle {
     let accent: Color
 
     func makeBody(configuration: Configuration) -> some View {

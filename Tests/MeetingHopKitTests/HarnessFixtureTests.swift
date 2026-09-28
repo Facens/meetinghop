@@ -215,6 +215,13 @@ private func hfix_testScenarioClicksNameKnownIdentifiers(_ t: TestRunner, scenar
         // merely in the way of what the scenario was actually testing.
         "guidance.action",
         "guidance.dismiss",
+        // The launch-at-login prompt, which every scenario now meets once
+        // the guidance card above is answered: `launchAtLoginPrompt.accept`
+        // in launch-at-login-reboot.sh, the one scenario proving acceptance
+        // actually registers the login item, `launchAtLoginPrompt.decline`
+        // everywhere else it is merely in the way.
+        "launchAtLoginPrompt.accept",
+        "launchAtLoginPrompt.decline",
     ]
 
     // All five call `click` now: the onboarding card appears on every launch,

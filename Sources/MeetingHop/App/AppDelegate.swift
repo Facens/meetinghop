@@ -15,6 +15,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// it is off screen because a meeting card took the space. Distinct from
     /// `guidancePanel != nil`, which only says a window exists.
     private var guidanceIsPending = false
+    /// The launch-at-login prompt's own panel — a third panel sharing the
+    /// same top-centre slot as the two above, never on screen at the same
+    /// time as either (see `showLaunchAtLoginPrompt`).
+    private var launchAtLoginPanel: HUDPanel?
+    private var launchAtLoginHosting: LaunchAtLoginPromptHostingController?
+    /// Mirrors `guidanceIsPending` for the prompt above.
+    private var launchAtLoginIsPending = false
     /// Created in applicationDidFinishLaunching, not as a property
     /// initialiser: an NSStatusItem made before NSApplication has finished
     /// launching is silently never installed.
@@ -85,6 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.menuBar = { [weak self] model in self?.menuBar?.update(model) }
         coordinator.presentGuidance = { [weak self] state in self?.showGuidance(state) }
         coordinator.dismissGuidance = { [weak self] in self?.tearDownGuidance() }
+        coordinator.presentLaunchAtLoginPrompt = { [weak self] in self?.showLaunchAtLoginPrompt() }
+        coordinator.dismissLaunchAtLoginPrompt = { [weak self] in self?.tearDownLaunchAtLoginPrompt() }
 
         activateHarnessJournal()
 
@@ -219,6 +228,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         placeGuidance()
     }
 
+    // MARK: - Launch-at-login prompt
+    //
+    // Mirrors the four onboarding-card methods just above, control for
+    // control: `Coordinator.decideLaunchAtLoginPrompt` never calls this
+    // until the guidance card is already answered or suppressed, so the two
+    // never fight over the slot — only the meeting card ever displaces
+    // either one (`present`/`tearDownCard` below).
+
+    private func showLaunchAtLoginPrompt() {
+        launchAtLoginIsPending = true
+
+        if launchAtLoginPanel == nil {
+            let controller = LaunchAtLoginPromptHostingController(
+                onAccept: { [weak self] in self?.coordinator.launchAtLoginPromptAnswered(accepted: true) },
+                onDecline: { [weak self] in self?.coordinator.launchAtLoginPromptAnswered(accepted: false) }
+            )
+            launchAtLoginHosting = controller
+            launchAtLoginPanel = HUDWindow.make(
+                hosting: controller.view,
+                identifier: AccessibilityID.LaunchAtLoginPrompt.panel
+            )
+        }
+
+        guard panel == nil else { return }   // a meeting card owns the space
+        placeLaunchAtLoginPrompt()
+    }
+
+    private func placeLaunchAtLoginPrompt() {
+        guard let launchAtLoginPanel, let launchAtLoginHosting else { return }
+        HUDWindow.fit(launchAtLoginPanel, hosting: launchAtLoginHosting.view)
+        HUDWindow.position(launchAtLoginPanel)
+        launchAtLoginPanel.orderFrontRegardless()
+    }
+
+    private func tearDownLaunchAtLoginPrompt() {
+        launchAtLoginIsPending = false
+        launchAtLoginPanel?.orderOut(nil)
+        launchAtLoginPanel = nil
+        launchAtLoginHosting = nil
+    }
+
+    private func restoreLaunchAtLoginPromptIfPending() {
+        guard launchAtLoginIsPending, panel == nil, let launchAtLoginPanel, !launchAtLoginPanel.isVisible else { return }
+        placeLaunchAtLoginPrompt()
+    }
+
     // MARK: - Card
 
     private func show(_ model: HUDModel) {
@@ -304,6 +359,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The meeting card takes the screen from the onboarding card, which
         // stays pending and comes back when this one goes (`showGuidance`).
         guidancePanel?.orderOut(nil)
+        // Same for the launch-at-login prompt, whichever of the two happens
+        // to be up (never both — see `showLaunchAtLoginPrompt`'s header).
+        launchAtLoginPanel?.orderOut(nil)
 
         if let hosting, let panel {
             // Whether the card is arriving or merely ticking. A card already
@@ -342,6 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The space is free again, so an onboarding card this one displaced
         // gets it back rather than being lost for the rest of the launch.
         restoreGuidanceIfPending()
+        restoreLaunchAtLoginPromptIfPending()
     }
 
     private func handle(_ action: HUDAction) {

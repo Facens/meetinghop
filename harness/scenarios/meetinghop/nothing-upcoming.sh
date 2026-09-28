@@ -97,6 +97,17 @@ step "dismiss-first-run-card"
 click "$BUNDLE_ID" "guidance.dismiss"
 expect_event "guidance dismissed" state=first_run > /dev/null
 
+# The launch-at-login prompt appears only once the calendar card above is
+# answered, which just happened — it shares the same top-centre slot
+# (`Coordinator.decideLaunchAtLoginPrompt`'s own doc comment). Declined
+# rather than accepted: this scenario's own subject is calendars-with-no-
+# meetings, and `launch-at-login-reboot.sh` is where accepting it is
+# exercised.
+step "decline-launch-at-login-prompt"
+expect_event "launch at login prompt shown" > /dev/null
+click "$BUNDLE_ID" "launchAtLoginPrompt.decline"
+expect_event "launch at login prompt answered" accepted=false > /dev/null
+
 step "calendars-counted"
 # count=4: the golden image's own three built-in calendars plus this
 # fixture's one — see this file's own header for why.

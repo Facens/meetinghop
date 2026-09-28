@@ -36,6 +36,14 @@
 # (`MenuBarView`'s empty states), and it is read the only way R17 allows
 # reading UI content at all: as a screenshot, never asserted on.
 #
+# THE LAUNCH-AT-LOGIN PROMPT is declined here rather than accepted or left
+# alone: it appears in the same top-centre slot as the calendar card, only
+# once that card is answered (`Coordinator.decideLaunchAtLoginPrompt`'s own
+# doc comment), and this scenario's own subject is the calendar denial, not
+# launch-at-login — `launch-at-login-reboot.sh` is where accepting it is
+# actually exercised. Declined before the popover is opened, so the
+# `denied-menu` screenshot below shows what it always showed.
+#
 # No calendar is seeded (fixture meetinghop/base): denial happens before
 # any calendar would matter, and R10's `no-accounts.sh` already owns
 # proving the golden image starts with zero calendars.
@@ -112,6 +120,14 @@ expect_event "guidance action" state=access_denied target=privacy_settings sourc
 # The evidence for the anchor. Nothing in the journal can distinguish "the
 # Calendars section" from "the top of Privacy & Security"; this can.
 shot "privacy-pane" > /dev/null
+
+# See this file's own header for why declined rather than accepted or
+# ignored: it appears only once the calendar card above is answered, which
+# just happened.
+step "decline-launch-at-login-prompt"
+expect_event "launch at login prompt shown" > /dev/null
+click "$BUNDLE_ID" "launchAtLoginPrompt.decline"
+expect_event "launch at login prompt answered" accepted=false > /dev/null
 
 step "menu-bar-state"
 open_status_item "$BUNDLE_ID"

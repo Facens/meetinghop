@@ -26,6 +26,7 @@ runJournalTests(runner)
 runSettingsStoreTests(runner)
 runAccessibilityIDTests(runner)
 runOnboardingTests(runner)
+runLaunchAtLoginPromptTests(runner)
 runHarnessFixtureTests(runner)
 runBundleTranslocationTests(runner)
 

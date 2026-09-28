@@ -133,6 +133,16 @@ click "$BUNDLE_ID" "guidance.action"
 expect_event "guidance action" state=first_run target=accounts_settings source=card ok=true fell_back=false > /dev/null
 shot "accounts-page" > /dev/null
 
+# The launch-at-login prompt appears only once the calendar card above is
+# answered, which just happened — it shares the same top-centre slot
+# (`Coordinator.decideLaunchAtLoginPrompt`'s own doc comment). Declined
+# rather than accepted: this scenario's own subject is the empty-Calendar
+# case, and `launch-at-login-reboot.sh` is where accepting it is exercised.
+step "decline-launch-at-login-prompt"
+expect_event "launch at login prompt shown" > /dev/null
+click "$BUNDLE_ID" "launchAtLoginPrompt.decline"
+expect_event "launch at login prompt answered" accepted=false > /dev/null
+
 # The card is answered and gone, so this is the popover's own empty state —
 # `Onboarding.emptyState(accessGranted: true, calendarCount: 3,
 # meetingCount: 0)`, which is `.noMeetings` ("Nothing else today"), not

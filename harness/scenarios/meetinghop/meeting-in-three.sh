@@ -42,6 +42,16 @@
 # default), which leaves a minute to get the onboarding card out of the way
 # without racing it.
 #
+# THE LAUNCH-AT-LOGIN PROMPT shares that same minute of slack: it only
+# appears once the calendar card is dismissed
+# (`Coordinator.decideLaunchAtLoginPrompt`'s own doc comment), so it is
+# declined immediately afterward, the same way the calendar card itself is
+# dismissed rather than acted on — this scenario's own subject is the
+# meeting card, and `launch-at-login-reboot.sh` is where accepting the
+# prompt is exercised. Declining it costs part of that minute of slack; if
+# this scenario ever starts racing the meeting card's own lead time, that is
+# the first place to look (UNVERIFIED: never run against a real clock).
+#
 # A password rides along in the seeded Zoom URL (obviously synthetic, never
 # a real one) so that a privacy bug — the password reaching the journal —
 # has something to actually be caught failing to leak
@@ -110,6 +120,11 @@ step "dismiss-first-run-card"
 expect_event "guidance shown" state=first_run > /dev/null
 click "$BUNDLE_ID" "guidance.dismiss"
 expect_event "guidance dismissed" state=first_run > /dev/null
+
+step "decline-launch-at-login-prompt"
+expect_event "launch at login prompt shown" > /dev/null
+click "$BUNDLE_ID" "launchAtLoginPrompt.decline"
+expect_event "launch at login prompt answered" accepted=false > /dev/null
 
 step "calendars-counted"
 # count=4: the golden image's own three built-in local calendars ("Calendar",

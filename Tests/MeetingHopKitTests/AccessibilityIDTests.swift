@@ -42,6 +42,11 @@ func runAccessibilityIDTests(_ t: TestRunner) {
         AccessibilityID.Guidance.action,
         AccessibilityID.Guidance.dismiss,
 
+        // LaunchAtLoginPrompt — the second onboarding panel and its two controls.
+        AccessibilityID.LaunchAtLoginPrompt.panel,
+        AccessibilityID.LaunchAtLoginPrompt.accept,
+        AccessibilityID.LaunchAtLoginPrompt.decline,
+
         // MenuBar
         AccessibilityID.MenuBar.statusItem,
         AccessibilityID.MenuBar.popover,
@@ -101,6 +106,21 @@ func runAccessibilityIDTests(_ t: TestRunner) {
         "the onboarding card's two buttons are two identifiers, not one merged element"
     )
 
+    // MARK: - Regression — the launch-at-login prompt is a THIRD panel
+    // sharing the same top-centre slot as the two above, and the same
+    // first-window-wins hazard applies: its identifier must be distinct from
+    // both, not just from one of them.
+
+    t.expect(
+        AccessibilityID.LaunchAtLoginPrompt.panel != AccessibilityID.HUD.panel
+            && AccessibilityID.LaunchAtLoginPrompt.panel != AccessibilityID.Guidance.panel,
+        "the launch-at-login prompt's panel carries an identifier distinct from both other panels"
+    )
+    t.expect(
+        AccessibilityID.LaunchAtLoginPrompt.accept != AccessibilityID.LaunchAtLoginPrompt.decline,
+        "the launch-at-login prompt's two buttons are two identifiers, not one merged element"
+    )
+
     // MARK: Regression — two different meetings whose calendar titles
     // happen to match (a recurring "1:1" appearing twice in the same day is
     // the ordinary case for this app, not an edge one) must not collide on
@@ -157,9 +177,12 @@ func runAccessibilityIDTests(_ t: TestRunner) {
     // (spaces included), so a rename here is a deliberate contract change
     // rather than a silent drift between the enum and `wait.sh --event`.
     //
-    // The four `guidance …` names are this unit's addition to KTD3's original
-    // list, one per state a user can now be in: shown, not shown and why,
-    // acted on, dismissed.
+    // The four `guidance …` names are the onboarding guidance's own
+    // addition to KTD3's original list, one per state a user can now be in:
+    // shown, not shown and why, acted on, dismissed. The three
+    // `launch at login prompt …` names are this unit's own addition, the
+    // same three-state shape for the second onboarding panel: shown, not
+    // shown and why, answered.
 
     let eventNames = JournalEvent.allCases.map(\.rawValue)
     t.expectEqual(Set(eventNames).count, eventNames.count, "every journal event name is unique")
@@ -170,7 +193,9 @@ func runAccessibilityIDTests(_ t: TestRunner) {
             "harness started", "calendar access", "calendars counted", "upcoming counted",
             "menu bar state", "card shown", "card concealed", "join fired", "dismissed",
             "guidance shown", "guidance suppressed", "guidance action", "guidance dismissed",
+            "launch at login prompt shown", "launch at login prompt suppressed", "launch at login prompt answered",
         ],
-        "the vocabulary is KTD3's MeetingHop list plus the onboarding guidance's own four, spaces and all"
+        "the vocabulary is KTD3's MeetingHop list plus the onboarding guidance's own four "
+            + "plus the launch-at-login prompt's own three, spaces and all"
     )
 }

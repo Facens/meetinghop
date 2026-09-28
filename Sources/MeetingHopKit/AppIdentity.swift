@@ -54,10 +54,19 @@ public enum AppIdentity {
         /// Storing the derived answer would be the mirroring KTD8 forbids —
         /// the copy would keep asking for betas after it updated to a final.
         public static let betaUpdates = "\(AppIdentity.bundleIdentifier).betaUpdates"
+        /// The launch-at-login prompt has been answered — accepted or
+        /// declined, or silently resolved because the user had already
+        /// turned the Settings toggle on themselves. Written once, never
+        /// cleared: like the first-run card, this question is asked once.
+        /// A translocated launch never sets it (see
+        /// `LaunchAtLoginPrompt.decide`'s own doc comment) precisely so a
+        /// launch that could not ask still gets to, once the app is really
+        /// installed.
+        public static let launchAtLoginPromptAsked = "\(AppIdentity.bundleIdentifier).launchAtLoginPromptAsked"
 
         public static let all: [String] = [
             leadMinutes, endingLeadMinutes, hideWhileSharing, dismissedMeetingIDs,
-            meetingAnswers, firstRunGuidanceSeen, accessDeniedNoticeSeen,
+            meetingAnswers, firstRunGuidanceSeen, accessDeniedNoticeSeen, launchAtLoginPromptAsked,
         ]
     }
 
