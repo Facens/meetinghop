@@ -48,9 +48,18 @@
 # declined immediately afterward, the same way the calendar card itself is
 # dismissed rather than acted on — this scenario's own subject is the
 # meeting card, and `launch-at-login-reboot.sh` is where accepting the
-# prompt is exercised. Declining it costs part of that minute of slack; if
-# this scenario ever starts racing the meeting card's own lead time, that is
-# the first place to look (UNVERIFIED: never run against a real clock).
+# prompt is exercised. By AXIdentifier, never `dialog answer alert` — see
+# that file's own comment at "accept-launch-at-login" for why. Declining it
+# costs part of that minute of slack; if this scenario ever starts racing
+# the meeting card's own lead time, that is the first place to look
+# (UNVERIFIED: never run against a real clock). Racing it should no longer
+# be silent either way: the prompt is a native, modal `NSAlert`
+# (`LaunchAtLoginAlert.swift`), and `HUDPanel.worksWhenModal`
+# (`Sources/MeetingHop/UI/HUDPanel.swift`) is meant to keep the meeting card
+# itself clickable even while that alert is still up — Apple's own
+# documented purpose for that property, though not itself proven against a
+# live click here (UNVERIFIED, no VM tier available; see this unit's own
+# report).
 #
 # A password rides along in the seeded Zoom URL (obviously synthetic, never
 # a real one) so that a privacy bug — the password reaching the journal —

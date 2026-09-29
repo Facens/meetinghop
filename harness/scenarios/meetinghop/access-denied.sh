@@ -37,12 +37,17 @@
 # reading UI content at all: as a screenshot, never asserted on.
 #
 # THE LAUNCH-AT-LOGIN PROMPT is declined here rather than accepted or left
-# alone: it appears in the same top-centre slot as the calendar card, only
-# once that card is answered (`Coordinator.decideLaunchAtLoginPrompt`'s own
-# doc comment), and this scenario's own subject is the calendar denial, not
-# launch-at-login — `launch-at-login-reboot.sh` is where accepting it is
-# actually exercised. Declined before the popover is opened, so the
-# `denied-menu` screenshot below shows what it always showed.
+# alone: it is a native `NSAlert` (`LaunchAtLoginAlert.swift`), shown only
+# once the calendar card above is answered
+# (`Coordinator.decideLaunchAtLoginPrompt`'s own doc comment), and this
+# scenario's own subject is the calendar denial, not launch-at-login —
+# `launch-at-login-reboot.sh` is where accepting it is actually exercised.
+# Declined before the popover is opened, so the `denied-menu` screenshot
+# below shows what it always showed. By AXIdentifier
+# (`launchAtLoginPrompt.decline`), never `dialog answer alert`: see
+# `launch-at-login-reboot.sh`'s own comment at its "accept-launch-at-login"
+# step for why that helper presses the wrong button on this particular
+# alert.
 #
 # No calendar is seeded (fixture meetinghop/base): denial happens before
 # any calendar would matter, and R10's `no-accounts.sh` already owns

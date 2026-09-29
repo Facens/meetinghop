@@ -157,9 +157,10 @@ step "calendar-permission"
 confirm_dialog calendar allow "calendar access" granted=true > /dev/null
 
 # Answered before the launch-at-login prompt or the Settings window is
-# opened: both onboarding panels sit at the top centre of the screen and
-# would otherwise be in every screenshot this scenario asks a human to
-# compare.
+# opened: the launch-at-login prompt never appears until this card is
+# (`Coordinator.decideLaunchAtLoginPrompt`'s own doc comment), and the card
+# itself sits top-centre of the screen, which would otherwise be in every
+# screenshot this scenario asks a human to compare.
 step "dismiss-first-run-card"
 expect_event "guidance shown" state=first_run > /dev/null
 click "$BUNDLE_ID" "guidance.dismiss"
@@ -171,8 +172,30 @@ expect_event "guidance dismissed" state=first_run > /dev/null
 # above, rather than raced against it.
 step "launch-at-login-prompt"
 expect_event "launch at login prompt shown" > /dev/null
+# It is a native `NSAlert` (`LaunchAtLoginAlert.swift`), drawn one run-loop
+# turn after the line above is journalled
+# (`AppDelegate.showLaunchAtLoginPrompt`'s own `RunLoop.main.perform`), so
+# the journal line can land a beat before the alert has actually drawn. The
+# wait below is the same idiom "post-reboot-settings" already uses further
+# down this file for the identical reason: poll for the button's own
+# AXIdentifier before trusting a screenshot to show it.
+LOGIN_PROMPT_DEADLINE=$(( $(date +%s) + HARNESS_STEP_TIMEOUT ))
+until _scenario_osascript "$_HARNESS_PROBE_BOUND" ax.applescript find "$BUNDLE_ID" "launchAtLoginPrompt.accept" 2>/dev/null \
+        | jq -e '.found == true' > /dev/null 2>&1 \
+      || [ "$(date +%s)" -ge "$LOGIN_PROMPT_DEADLINE" ]; do
+    sleep 0.5
+done
 shot "launch-at-login-prompt" > /dev/null
 
+# By AXIdentifier, never `dialog answer alert allow`. That helper matches
+# the alert kind by no button name, so it falls back to position and presses
+# the LAST button — "Not Now" here, since an `NSAlert` stacks two long
+# titles vertically rather than laying them out side by side (an AgentMenu
+# VM gate failed exactly this way: `dialog answer alert allow` recorded
+# `enabled=false` on an alert whose default button was "Launch at Login").
+# The buttons carry AXIdentifiers, and an NSAlert is a window of the app's
+# own process, so `click` reaches them the way it reaches every other
+# control.
 step "accept-launch-at-login"
 click "$BUNDLE_ID" "launchAtLoginPrompt.accept"
 ANSWERED="$(expect_event "launch at login prompt answered" accepted=true)"
@@ -254,6 +277,22 @@ log "no calendar prompt reappeared after the reboot"
 step "post-reboot-settings"
 open_status_item "$BUNDLE_ID"
 click "$BUNDLE_ID" "menuBar.settings"
+# Wait for the window before the shot. The v0.2.2-beta.1 gate took this one
+# a second after the click and got bare wallpaper, no menu bar and no
+# window, on a session that had only just logged back in; every assertion
+# above had already passed, so the only casualty was the evidence a human
+# reviews before publishing. The pre-reboot shot never needed this because
+# that session had been up for a minute. Bounded like every other wait, and
+# never a failure on its own: the shot is evidence, not an assertion (R17).
+# Polls ax.applescript's `find` for the window's own identifier rather than
+# ax_window_count, which also counts the HUD panels this app keeps.
+SETTINGS_DEADLINE=$(( $(date +%s) + 15 ))
+until _scenario_osascript "$_HARNESS_PROBE_BOUND" ax.applescript find "$BUNDLE_ID" "settings.window" 2>/dev/null \
+        | jq -e '.found == true' > /dev/null 2>&1 \
+      || [ "$(date +%s)" -ge "$SETTINGS_DEADLINE" ]; do
+    sleep 1
+done
+sleep 1
 shot "settings-after-reboot" > /dev/null
 
 verdict pass

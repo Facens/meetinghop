@@ -91,18 +91,13 @@ public enum AccessibilityID {
 
     // MARK: LaunchAtLoginPrompt
 
-    /// The launch-at-login prompt (`LaunchAtLoginPromptView.swift`) — a
-    /// second onboarding panel, distinct from `Guidance` above for the
-    /// reason `LaunchAtLoginPrompt`'s own doc comment gives (it answers an
-    /// unrelated question, not a fifth `GuidanceState`).
+    /// The launch-at-login prompt (`LaunchAtLoginAlert.swift`) — a native
+    /// `NSAlert`, not a panel this app builds, so unlike `Guidance` above
+    /// there is no container identifier here: `setAccessibilityIdentifier`
+    /// is applied straight to the alert's own two `NSButton`s, and System
+    /// Events finds the alert's window itself by role rather than by an
+    /// identifier this app assigns.
     public enum LaunchAtLoginPrompt {
-        /// The panel itself — a borderless `HUDPanel`, applied with
-        /// `setAccessibilityIdentifier` in `HUDWindow.make`. Its own
-        /// identifier, never `Guidance.panel` or `HUD.panel`: `findByIdentifier`
-        /// returns the first window it walks to, so a shared identifier would
-        /// make a click meant for one panel land on whichever the walk
-        /// reached first.
-        public static let panel = "launchAtLoginPrompt.panel"
         /// The default button: registers the login item.
         public static let accept = "launchAtLoginPrompt.accept"
         /// The secondary button: declines, without touching `SMAppService`.

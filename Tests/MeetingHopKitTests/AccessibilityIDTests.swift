@@ -42,8 +42,8 @@ func runAccessibilityIDTests(_ t: TestRunner) {
         AccessibilityID.Guidance.action,
         AccessibilityID.Guidance.dismiss,
 
-        // LaunchAtLoginPrompt — the second onboarding panel and its two controls.
-        AccessibilityID.LaunchAtLoginPrompt.panel,
+        // LaunchAtLoginPrompt — the native alert's own two buttons; no
+        // panel identifier, since this app builds no window for it.
         AccessibilityID.LaunchAtLoginPrompt.accept,
         AccessibilityID.LaunchAtLoginPrompt.decline,
 
@@ -106,16 +106,11 @@ func runAccessibilityIDTests(_ t: TestRunner) {
         "the onboarding card's two buttons are two identifiers, not one merged element"
     )
 
-    // MARK: - Regression — the launch-at-login prompt is a THIRD panel
-    // sharing the same top-centre slot as the two above, and the same
-    // first-window-wins hazard applies: its identifier must be distinct from
-    // both, not just from one of them.
+    // MARK: - Regression — the launch-at-login prompt is a native `NSAlert`,
+    // not a third panel, so it carries no container identifier to collide
+    // with `HUD.panel` or `Guidance.panel` in the first place; what still
+    // has to hold is its own two buttons being two identifiers, not one.
 
-    t.expect(
-        AccessibilityID.LaunchAtLoginPrompt.panel != AccessibilityID.HUD.panel
-            && AccessibilityID.LaunchAtLoginPrompt.panel != AccessibilityID.Guidance.panel,
-        "the launch-at-login prompt's panel carries an identifier distinct from both other panels"
-    )
     t.expect(
         AccessibilityID.LaunchAtLoginPrompt.accept != AccessibilityID.LaunchAtLoginPrompt.decline,
         "the launch-at-login prompt's two buttons are two identifiers, not one merged element"

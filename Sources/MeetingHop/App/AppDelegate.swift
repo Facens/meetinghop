@@ -15,13 +15,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// it is off screen because a meeting card took the space. Distinct from
     /// `guidancePanel != nil`, which only says a window exists.
     private var guidanceIsPending = false
-    /// The launch-at-login prompt's own panel — a third panel sharing the
-    /// same top-centre slot as the two above, never on screen at the same
-    /// time as either (see `showLaunchAtLoginPrompt`).
-    private var launchAtLoginPanel: HUDPanel?
-    private var launchAtLoginHosting: LaunchAtLoginPromptHostingController?
-    /// Mirrors `guidanceIsPending` for the prompt above.
-    private var launchAtLoginIsPending = false
     /// Created in applicationDidFinishLaunching, not as a property
     /// initialiser: an NSStatusItem made before NSApplication has finished
     /// launching is silently never installed.
@@ -93,7 +86,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.presentGuidance = { [weak self] state in self?.showGuidance(state) }
         coordinator.dismissGuidance = { [weak self] in self?.tearDownGuidance() }
         coordinator.presentLaunchAtLoginPrompt = { [weak self] in self?.showLaunchAtLoginPrompt() }
-        coordinator.dismissLaunchAtLoginPrompt = { [weak self] in self?.tearDownLaunchAtLoginPrompt() }
 
         activateHarnessJournal()
 
@@ -230,48 +222,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Launch-at-login prompt
     //
-    // Mirrors the four onboarding-card methods just above, control for
-    // control: `Coordinator.decideLaunchAtLoginPrompt` never calls this
-    // until the guidance card is already answered or suppressed, so the two
-    // never fight over the slot — only the meeting card ever displaces
-    // either one (`present`/`tearDownCard` below).
+    // Not a fourth panel-management method mirroring the onboarding card's
+    // above: `LaunchAtLoginAlert` is a native, modal `NSAlert`, which draws
+    // and positions itself — there is nothing here to build, fit or tear
+    // down. `Coordinator.decideLaunchAtLoginPrompt` never calls this until
+    // the guidance card is already answered or suppressed, so the two never
+    // compete for attention.
+    //
+    // Unlike the HUD-panel version this replaced, the alert is shown even
+    // if a meeting card currently owns the screen, rather than waiting its
+    // turn: `HUDPanel.worksWhenModal` (set in `HUDWindow.make`) is Apple's
+    // own documented mechanism for keeping an auxiliary panel clickable
+    // during another window's modal session, which is what should keep the
+    // meeting card's Join button reachable while this alert is up —
+    // expected per that API's stated purpose, though not exercised end to
+    // end by an actual click during a live modal session here (UNVERIFIED,
+    // no VM tier available in this unit's own report).
 
     private func showLaunchAtLoginPrompt() {
-        launchAtLoginIsPending = true
-
-        if launchAtLoginPanel == nil {
-            let controller = LaunchAtLoginPromptHostingController(
-                onAccept: { [weak self] in self?.coordinator.launchAtLoginPromptAnswered(accepted: true) },
-                onDecline: { [weak self] in self?.coordinator.launchAtLoginPromptAnswered(accepted: false) }
-            )
-            launchAtLoginHosting = controller
-            launchAtLoginPanel = HUDWindow.make(
-                hosting: controller.view,
-                identifier: AccessibilityID.LaunchAtLoginPrompt.panel
-            )
+        // One turn of the run loop later, never synchronous with the call
+        // that triggered it (`Coordinator.decideLaunchAtLoginPrompt`, itself
+        // reached from a button press or from `start()`'s own async chain).
+        //
+        // `RunLoop.main.perform`, deliberately not `DispatchQueue.main.async`
+        // (AgentMenu's own recipe, `LaunchAtLoginPrompt.presentIfNeeded`):
+        // measured directly (see this unit's own report). Entering
+        // `NSAlert.runModal()` from inside a block already running on the
+        // GCD main queue starves that queue for the rest of the modal
+        // session — nothing else dispatched to it, including every
+        // `Task { @MainActor in }` hop this app's own timers use
+        // (`Coordinator.start()`, `CalendarSource.start()`), runs again
+        // until the alert is dismissed. Entering the same `runModal()` from
+        // a block scheduled through `RunLoop.main.perform` instead does not
+        // have that effect — the main dispatch queue keeps draining
+        // normally throughout — which is what keeps the rest of the app,
+        // including the meeting card's own countdown, alive while this
+        // alert is up.
+        RunLoop.main.perform { [weak self] in
+            // `RunLoop.main.perform`'s closure type is plain `() -> Void`,
+            // not `@MainActor () -> Void`, so the compiler cannot see what
+            // is structurally guaranteed here: `RunLoop.main` only ever runs
+            // this block on the main thread. `MainActor.assumeIsolated`
+            // states that guarantee explicitly rather than leaving every
+            // main-actor call inside silently flagged as "implicitly
+            // asynchronous" — the same shape `Coordinator.start()`'s own
+            // Timer closure would need if it called back into `self`
+            // directly instead of through `Task { @MainActor in }`.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                LaunchAtLoginAlert.present { accepted in
+                    self.coordinator.launchAtLoginPromptAnswered(accepted: accepted)
+                }
+            }
         }
-
-        guard panel == nil else { return }   // a meeting card owns the space
-        placeLaunchAtLoginPrompt()
-    }
-
-    private func placeLaunchAtLoginPrompt() {
-        guard let launchAtLoginPanel, let launchAtLoginHosting else { return }
-        HUDWindow.fit(launchAtLoginPanel, hosting: launchAtLoginHosting.view)
-        HUDWindow.position(launchAtLoginPanel)
-        launchAtLoginPanel.orderFrontRegardless()
-    }
-
-    private func tearDownLaunchAtLoginPrompt() {
-        launchAtLoginIsPending = false
-        launchAtLoginPanel?.orderOut(nil)
-        launchAtLoginPanel = nil
-        launchAtLoginHosting = nil
-    }
-
-    private func restoreLaunchAtLoginPromptIfPending() {
-        guard launchAtLoginIsPending, panel == nil, let launchAtLoginPanel, !launchAtLoginPanel.isVisible else { return }
-        placeLaunchAtLoginPrompt()
     }
 
     // MARK: - Card
@@ -358,10 +361,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func present(_ model: HUDModel) {
         // The meeting card takes the screen from the onboarding card, which
         // stays pending and comes back when this one goes (`showGuidance`).
+        // The launch-at-login alert is not ordered out here: it is a modal
+        // `NSAlert`, not a panel this delegate owns, and it stays up — see
+        // `showLaunchAtLoginPrompt`'s own header for why that is safe.
         guidancePanel?.orderOut(nil)
-        // Same for the launch-at-login prompt, whichever of the two happens
-        // to be up (never both — see `showLaunchAtLoginPrompt`'s header).
-        launchAtLoginPanel?.orderOut(nil)
 
         if let hosting, let panel {
             // Whether the card is arriving or merely ticking. A card already
@@ -400,7 +403,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The space is free again, so an onboarding card this one displaced
         // gets it back rather than being lost for the rest of the launch.
         restoreGuidanceIfPending()
-        restoreLaunchAtLoginPromptIfPending()
     }
 
     private func handle(_ action: HUDAction) {

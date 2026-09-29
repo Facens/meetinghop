@@ -133,11 +133,14 @@ click "$BUNDLE_ID" "guidance.action"
 expect_event "guidance action" state=first_run target=accounts_settings source=card ok=true fell_back=false > /dev/null
 shot "accounts-page" > /dev/null
 
-# The launch-at-login prompt appears only once the calendar card above is
-# answered, which just happened — it shares the same top-centre slot
+# The launch-at-login prompt — a native `NSAlert`
+# (`LaunchAtLoginAlert.swift`) — appears only once the calendar card above
+# is answered, which just happened
 # (`Coordinator.decideLaunchAtLoginPrompt`'s own doc comment). Declined
 # rather than accepted: this scenario's own subject is the empty-Calendar
 # case, and `launch-at-login-reboot.sh` is where accepting it is exercised.
+# By AXIdentifier, never `dialog answer alert` — see that file's own
+# comment at "accept-launch-at-login" for why.
 step "decline-launch-at-login-prompt"
 expect_event "launch at login prompt shown" > /dev/null
 click "$BUNDLE_ID" "launchAtLoginPrompt.decline"

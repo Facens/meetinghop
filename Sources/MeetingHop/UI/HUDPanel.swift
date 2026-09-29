@@ -40,6 +40,21 @@ enum HUDWindow {
         )
         panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)))
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        // `NSPanel`'s own default (measured directly against this SDK:
+        // `false`) leaves this panel dead to mouse clicks for as long as
+        // `LaunchAtLoginAlert.present`'s `NSAlert` is running its modal
+        // session — the only modal window this app ever shows. Without
+        // this, a meeting due right now would sit on screen with a Join
+        // button that does not respond, trapped behind a one-time
+        // preference question that has nothing to do with it. Apple's own
+        // documented purpose for this property is exactly this case; not
+        // separately exercised here with an actual click during a live
+        // modal session (UNVERIFIED, no VM tier available in this unit's
+        // own report). The onboarding card built from this same function
+        // needs the same fix, for the same reason (though by design it is
+        // never shown at the same time as the alert — see
+        // `Coordinator.decideLaunchAtLoginPrompt`'s own doc comment).
+        panel.worksWhenModal = true
         panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear

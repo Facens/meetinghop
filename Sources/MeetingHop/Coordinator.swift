@@ -88,13 +88,13 @@ final class Coordinator {
     var presentGuidance: ((GuidanceState) -> Void)?
     /// Take it off, for good: it is answered, not concealed.
     var dismissGuidance: (() -> Void)?
-    /// Put the launch-at-login prompt on screen. Called at most once per
+    /// Put the launch-at-login prompt on screen — a modal `NSAlert`
+    /// (`LaunchAtLoginAlert`), which draws, answers and dismisses itself, so
+    /// unlike `dismissGuidance` there is no matching "take it off" closure:
+    /// nothing here owns a window to tear down. Called at most once per
     /// launch, and only after the guidance card above has been answered or
     /// suppressed — see `decideLaunchAtLoginPrompt`'s own doc comment.
     var presentLaunchAtLoginPrompt: (() -> Void)?
-    /// Take it off, for good: answered, not concealed — the same contract
-    /// `dismissGuidance` carries.
-    var dismissLaunchAtLoginPrompt: (() -> Void)?
 
     /// What the onboarding card is showing, or `nil` when there is none.
     /// Held rather than passed back in from the view so the view has one job
@@ -191,6 +191,21 @@ final class Coordinator {
         }
         calendar.start()
 
+        // `.common` modes, deliberately: this is what keeps the meeting card
+        // ticking — and, since `LaunchAtLoginAlert.present` shows its
+        // `NSAlert` modally, what keeps it ticking through that alert too.
+        // Measured directly (see this unit's own report): a Timer in
+        // `.common` modes DOES fire while `runModal()` has the run loop in
+        // its modal-panel mode, but the `Task { @MainActor in }` hop below
+        // only actually runs during that session because
+        // `AppDelegate.showLaunchAtLoginPrompt` presents the alert through
+        // `RunLoop.main.perform`, not `DispatchQueue.main.async` — entering
+        // `runModal()` from inside a dispatched GCD block was found to
+        // starve the main dispatch queue for the rest of that modal session,
+        // which would have silently frozen this tick (and every other
+        // `DispatchQueue.main`/`Task { @MainActor in }` hop in the app) for
+        // as long as the alert stayed up. See that method's own comment for
+        // the fuller account.
         let t = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.evaluate() }
         }
@@ -229,8 +244,8 @@ final class Coordinator {
             presentGuidance?(state)
         case .suppress(let state, let reason):
             journal?.append(.guidanceSuppressed, JournalData.guidanceSuppressed(state: state, reason: reason))
-            // Nothing is occupying the onboarding slot, so the launch-at-login
-            // prompt can use it straight away — see
+            // The guidance card was never shown, so it can never compete with
+            // the launch-at-login prompt for attention — see
             // `decideLaunchAtLoginPrompt`'s own doc comment for why this has
             // to wait for the guidance card one way or the other.
             decideLaunchAtLoginPrompt()
@@ -274,9 +289,9 @@ final class Coordinator {
         OnboardingStorage.remember(state, in: defaults)
         guidance = nil
         dismissGuidance?()
-        // The guidance card just answered was occupying the same top-centre
-        // slot the launch-at-login prompt uses; now that it is gone, decide
-        // whether that prompt is owed.
+        // The guidance card just answered is the one thing that could still
+        // be waiting on the launch-at-login prompt; now that it is gone,
+        // decide whether that prompt is owed.
         decideLaunchAtLoginPrompt()
     }
 
@@ -289,9 +304,10 @@ final class Coordinator {
     /// `decideGuidance`'s `.suppress` branch, when no calendar card was ever
     /// shown, and `answerGuidance`, once the calendar card that WAS shown
     /// has been dismissed or acted on. Either way this only runs once the
-    /// onboarding slot at the top of the screen is free — the meeting card
-    /// aside, the two onboarding panels never compete for it, because this
-    /// one is never asked to appear until the other is already gone.
+    /// calendar guidance card is fully out of the way — the two never
+    /// compete for the user's attention, because this one is never asked to
+    /// appear until the other is already answered or was never shown at
+    /// all.
     private func decideLaunchAtLoginPrompt() {
         switch LaunchAtLoginPrompt.decide(
             translocated: translocated,
@@ -328,7 +344,6 @@ final class Coordinator {
         journal?.append(.launchAtLoginPromptAnswered, JournalData.launchAtLoginPromptAnswered(
             accepted: accepted, status: LaunchAtLogin.statusName
         ))
-        dismissLaunchAtLoginPrompt?()
     }
 
     /// Opens where the state says to go, and falls back to Calendar.app when

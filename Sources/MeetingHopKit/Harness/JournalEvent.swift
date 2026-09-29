@@ -37,8 +37,8 @@ public enum JournalEvent: String, CaseIterable, Sendable {
     case guidanceDismissed = "guidance dismissed"
     /// The launch-at-login prompt appeared (`LaunchAtLoginPrompt`) — a
     /// second, unrelated first-run question, shown only after the calendar
-    /// guidance above has been answered or suppressed (they share one
-    /// on-screen slot).
+    /// guidance above has been answered or suppressed, so the two never
+    /// compete for the user's attention at once.
     case launchAtLoginPromptShown = "launch at login prompt shown"
     /// It did not appear, and why — the same positive-for-absence proof
     /// `guidanceSuppressed` gives for the card above it.

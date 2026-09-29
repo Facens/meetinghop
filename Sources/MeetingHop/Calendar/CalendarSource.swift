@@ -79,6 +79,9 @@ final class CalendarSource {
             name: .EKEventStoreChanged,
             object: store
         )
+        // `.common` modes, for the same reason `Coordinator.start()`'s own
+        // tick timer is — see that comment for why this keeps polling
+        // through `LaunchAtLoginAlert.present`'s modal session too.
         let t = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refresh() }
         }
